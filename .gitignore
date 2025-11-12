@@ -1,0 +1,16 @@
+# Node
+node_modules/
+npm-debug.log*
+pnpm-lock.yaml
+yarn.lock
+
+# Vite build
+dist/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
