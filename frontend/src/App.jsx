@@ -22,6 +22,7 @@ import {
   Keyboard,
   Trash2,
   ListFilter,
+  Calendar,
 } from 'lucide-react'
 
 // Vite-Env (für später, wenn echte API-Funktionen dazukommen)
@@ -71,7 +72,9 @@ export default function NavioApp() {
                 BN
               </div>
               <div className="hidden sm:block">
-                <div className="leading-tight text-sm font-medium text-slate-800">Benedikt</div>
+                <div className="leading-tight text-sm font-medium text-slate-800">
+                  Benedikt
+                </div>
                 <div className="text-[11px] text-slate-500">Dispo · online</div>
               </div>
             </button>
@@ -157,31 +160,58 @@ function Card({ title, children, actions, className }) {
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                Orders View                                 */
+/* -------------------------------------------------------------------------- */
+
 function OrdersView() {
+  // Beispielinitialdaten im richtigen Format
   const initial = [
-    { id: 'G4492', customer: 'Corne Naalden Vleesvee', city: 'Seifersdorf', weight: 437 },
-    { id: 'G4420', customer: 'Daniel Schreiber', city: 'Blumberg', weight: 261.5 },
-    { id: 'G4339', customer: 'Stefan Selzer', city: 'Kirn', weight: 198 },
-    { id: '24447', customer: 'Hakenkamp Agrartechnik', city: 'Herzebrock', weight: 227.2 },
+    {
+      id: '217305', // Belegnummer
+      customerName: 'Ökostromerzeugung Schele, St. Georgen-Oberkirnach',
+      customerNumber: '24167',
+      zip: '72186',
+      city: 'Empfingen',
+      deliveryDate: '27.10.2025',
+      weight: 192.9,
+    },
+    {
+      id: '217306',
+      customerName: 'Corne Naalden Vleesvee, RW Hoeven',
+      customerNumber: 'G4492',
+      zip: '4741',
+      city: 'RW Hoeven',
+      deliveryDate: '26.10.2025',
+      weight: 437,
+    },
   ]
 
   const [orders, setOrders] = useState(initial)
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(new Set())
-
   const [history, setHistory] = useState([])
 
   const tableOrders = useMemo(() => orders, [orders])
 
   function handleCreate(newOrder) {
+    // interne ID falls keine Belegnummer gesetzt
     const id =
       newOrder.id && newOrder.id.trim().length
-        ? newOrder.id
-        : `M${Date.now().toString().slice(-5)}`
-    setOrders((prev) => [
-      { id, customer: newOrder.customer, city: newOrder.city || '', weight: newOrder.weight },
-      ...prev,
-    ])
+        ? newOrder.id.trim()
+        : `LS-${Date.now().toString().slice(-6)}`
+
+    const entry = {
+      id,
+      customerName: newOrder.customerName?.trim() || 'Unbenannter Kunde',
+      customerNumber: newOrder.customerNumber?.trim() || '',
+      zip: newOrder.zip?.trim() || '',
+      city: newOrder.city?.trim() || '',
+      deliveryDate: newOrder.deliveryDate?.trim() || '',
+      weight: typeof newOrder.weight === 'number' ? newOrder.weight : Number(newOrder.weight) || 0,
+    }
+
+    setOrders((prev) => [entry, ...prev])
     setShowAdd(false)
   }
 
@@ -296,6 +326,7 @@ function OrdersView() {
 
 function OrdersTable({ orders, selected, onToggle, onToggleAll }) {
   const allSelected = orders.length > 0 && orders.every((o) => selected.has(o.id))
+
   return (
     <div className="max-h-[440px] overflow-y-auto overflow-x-auto rounded-2xl border border-slate-200 bg-white/90 shadow-sm">
       <table className="w-full text-sm">
@@ -311,31 +342,53 @@ function OrdersTable({ orders, selected, onToggle, onToggleAll }) {
               />
             </th>
             <th className="px-3 py-2 text-left">Kunde</th>
-            <th className="px-3 py-2 text-left">Bestell-ID</th>
-            <th className="px-3 py-2 text-left">Ort</th>
-            <th className="px-3 py-2 text-right">Gewicht</th>
+            <th className="px-3 py-2 text-left">PLZ / Ort</th>
+            <th className="px-3 py-2 text-left">Lieferscheindatum</th>
+            <th className="px-3 py-2 text-right">Gewicht (kg)</th>
           </tr>
         </thead>
         <tbody className="text-slate-800">
-          {orders.map((o) => (
-            <tr
-              key={o.id}
-              className="border-b border-slate-100/80 hover:bg-slate-50/60"
-            >
-              <td className="px-3 py-2">
-                <input
-                  type="checkbox"
-                  checked={selected.has(o.id)}
-                  onChange={() => onToggle(o.id)}
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-200"
-                />
-              </td>
-              <td className="px-3 py-2">{o.customer}</td>
-              <td className="px-3 py-2 text-slate-600">{o.id}</td>
-              <td className="px-3 py-2">{o.city || '—'}</td>
-              <td className="px-3 py-2 text-right">{o.weight} kg</td>
-            </tr>
-          ))}
+          {orders.map((o) => {
+            const weight =
+              typeof o.weight === 'number' && !Number.isNaN(o.weight)
+                ? o.weight
+                : Number(o.weight) || 0
+            const weightDisplay = weight.toLocaleString('de-DE', { maximumFractionDigits: 2 })
+
+            return (
+              <tr
+                key={o.id}
+                className="border-b border-slate-100/80 hover:bg-slate-50/60"
+              >
+                <td className="px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(o.id)}
+                    onChange={() => onToggle(o.id)}
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-200"
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <div className="text-sm font-medium text-slate-900">
+                    {o.customerName || '—'}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Kunden-Nr.: {o.customerNumber || '—'}
+                  </div>
+                  {o.id && (
+                    <div className="text-xs text-slate-400">
+                      Beleg-Nr.: {o.id}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  {o.zip || '—'} {o.city || ''}
+                </td>
+                <td className="px-3 py-2">{o.deliveryDate || '—'}</td>
+                <td className="px-3 py-2 text-right">{weightDisplay} kg</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -366,16 +419,44 @@ function BulkBar({ count, onClear, onDelete }) {
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/*                              CSV Import Karte                              */
+/* -------------------------------------------------------------------------- */
+
 function CsvImportCard({ onImport }) {
   const [isDrag, setIsDrag] = useState(false)
   const [fileName, setFileName] = useState('')
   const [fileObj, setFileObj] = useState(null)
-  const [mapping] = useState({ id: 'id', zip: 'zip', city: 'city', weight: 'weight' })
+
+  const mapping = [
+    { ui: 'Kunde', csv: 'Matchcode Auftraggeber' },
+    { ui: 'Kunden-Nr.', csv: 'Auftraggeber' },
+    { ui: 'PLZ', csv: 'PLZ Lieferanschrift' },
+    { ui: 'Ort', csv: 'Ort Lieferanschrift' },
+    { ui: 'Lieferscheindatum', csv: 'Belegdatum' },
+    { ui: 'Gewicht (kg)', csv: 'Gesamtgewicht in kg' },
+    { ui: 'Filter', csv: 'Belegart = "Lieferschein"' },
+  ]
 
   const preview = [
-    { id: 'G4492', customer: 'Corne Naalden Vleesvee', city: 'Seifersdorf', weight: 437 },
-    { id: 'G4420', customer: 'Daniel Schreiber', city: 'Blumberg', weight: 261.5 },
-    { id: 'G4339', customer: 'Stefan Selzer', city: 'Kirn', weight: 198 },
+    {
+      id: '217305',
+      customerName: 'Ökostromerzeugung Schele, St. Georgen-Oberkirnach',
+      customerNumber: '24167',
+      zip: '72186',
+      city: 'Empfingen',
+      deliveryDate: '27.10.2025',
+      weight: 192.9,
+    },
+    {
+      id: '217306',
+      customerName: 'Corne Naalden Vleesvee, RW Hoeven',
+      customerNumber: 'G4492',
+      zip: '4741',
+      city: 'RW Hoeven',
+      deliveryDate: '26.10.2025',
+      weight: 437,
+    },
   ]
 
   function onDrop(e) {
@@ -398,12 +479,15 @@ function CsvImportCard({ onImport }) {
   async function handleImport() {
     const id = batchId()
     if (!fileObj) {
+      // Demo-Fall ohne echte Datei
       onImport({ id, rows: preview })
       return
     }
+
     const text = await fileObj.text()
     const rows = parseCSVToOrders(text)
-    onImport({ id, rows: rows.length ? rows : preview })
+
+    onImport({ id, rows })
   }
 
   return (
@@ -412,7 +496,8 @@ function CsvImportCard({ onImport }) {
       className="flex h-full flex-col"
       actions={
         <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Settings2 className="h-4 w-4" /> Mapping
+          <Settings2 className="h-4 w-4" />
+          Mapping & Filter
         </div>
       }
     >
@@ -428,8 +513,12 @@ function CsvImportCard({ onImport }) {
         }`}
       >
         <UploadCloud className="mb-3 h-8 w-8 text-slate-400" />
-        <div className="text-sm font-medium text-slate-800">CSV hierher ziehen oder klicken</div>
-        <div className="text-xs text-slate-500">Unterstützt: .csv · UTF-8 / ; oder ,</div>
+        <div className="text-sm font-medium text-slate-800">
+          CSV hierher ziehen oder klicken
+        </div>
+        <div className="text-xs text-slate-500">
+          Unterstützt: .csv · UTF-8 / ; oder , · exakt deine Warenwirtschaft-Exporte
+        </div>
         <input
           type="file"
           accept=".csv"
@@ -447,52 +536,62 @@ function CsvImportCard({ onImport }) {
         )}
       </label>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {Object.entries(mapping).map(([k, v]) => (
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+        {mapping.map((m) => (
           <div
-            key={k}
+            key={m.ui}
             className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-sm"
           >
             <span className="rounded-md bg-slate-100/80 px-2 py-0.5 text-xs text-slate-600">
-              {k}
+              {m.ui}
             </span>
             <span className="text-slate-700">→</span>
-            <span className="font-medium text-slate-800">{v}</span>
+            <span className="font-medium text-slate-800">{m.csv}</span>
           </div>
         ))}
       </div>
 
       <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90 p-3">
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
-          <TableIcon className="h-4 w-4" /> Vorschau (3 Zeilen)
+          <TableIcon className="h-4 w-4" /> Vorschau (Demo)
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-xs">
             <thead className="text-slate-500">
               <tr>
-                <th className="py-2">id</th>
-                <th className="py-2">zip</th>
-                <th className="py-2">city</th>
-                <th className="py-2">weight</th>
+                <th className="py-2 pr-3">Kunde</th>
+                <th className="py-2 pr-3">Kunden-Nr.</th>
+                <th className="py-2 pr-3">PLZ / Ort</th>
+                <th className="py-2 pr-3">Lieferscheindatum</th>
+                <th className="py-2 pr-3 text-right">Gewicht (kg)</th>
               </tr>
             </thead>
             <tbody className="text-slate-800">
               {preview.map((r) => (
                 <tr key={r.id} className="border-t border-slate-100/80">
-                  <td className="py-2">{r.id}</td>
-                  <td className="py-2">—</td>
-                  <td className="py-2">{r.city || '—'}</td>
-                  <td className="py-2">{r.weight}</td>
+                  <td className="py-2 pr-3">{r.customerName}</td>
+                  <td className="py-2 pr-3">{r.customerNumber}</td>
+                  <td className="py-2 pr-3">
+                    {r.zip} {r.city}
+                  </td>
+                  <td className="py-2 pr-3">{r.deliveryDate}</td>
+                  <td className="py-2 pl-3 text-right">
+                    {r.weight.toLocaleString('de-DE', { maximumFractionDigits: 2 })} kg
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <div className="mt-2 text-[11px] text-slate-500">
+          Beim echten Import werden nur Zeilen mit Belegart ={' '}
+          <span className="font-semibold">&quot;Lieferschein&quot;</span> übernommen.
+        </div>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 transition hover:bg-white/80">
-          <FileSpreadsheet className="h-4 w-4" /> Datei prüfen
+          <FileSpreadsheet className="h-4 w-4" /> Datei prüfen (später)
         </button>
         <button
           onClick={handleImport}
@@ -561,47 +660,93 @@ function ImportHistoryCard({ items, onDeleteBatch }) {
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          CSV Parsing – Warenwirtschaft                      */
+/* -------------------------------------------------------------------------- */
+
+// Nur die relevanten Spalten werden gelesen. Es werden NUR Belege mit
+// Belegart === "Lieferschein" importiert.
 function parseCSVToOrders(text) {
   const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '')
   if (lines.length < 2) return []
+
   const delim = detectDelimiter(lines[0])
-  const headers = splitLine(lines[0], delim)
-    .map((h) => h.trim().replace(/^"|"$/g, '').toLowerCase())
+  const headerCells = splitLine(lines[0], delim).map((h) =>
+    h.trim().replace(/^"|"$/g, '')
+  )
+  const headersLower = headerCells.map((h) => h.toLowerCase())
 
-  const getIdx = (cands) =>
-    cands.map((c) => headers.indexOf(c)).find((i) => i >= 0) ?? -1
-  const idxId = getIdx(['id', 'bestell-id', 'auftrag', 'auftrag_id', 'auftragid', 'beleg', 'belegnummer'])
-  const idxCust = getIdx(['customer', 'kunde', 'name', 'firma'])
-  const idxCity = getIdx(['city', 'ort', 'stadt'])
-  const idxWeight = getIdx(['weight', 'gewicht', 'kg'])
+  const findExact = (name) =>
+    headersLower.indexOf(name.toLowerCase())
 
-  const res = []
-  for (let i = 1; i < lines.length; i++) {
-    const cells = splitLine(lines[i], delim)
-    if (!cells.length) continue
-    const idRaw = idxId >= 0 ? cells[idxId] : ''
-    const id = (idRaw || '').trim() || `I${i.toString().padStart(4, '0')}`
-    const customer = ((idxCust >= 0 ? cells[idxCust] : '') || `Unbenannt ${i}`)
-      .toString()
-      .trim()
-    const city = (idxCity >= 0 ? cells[idxCity] : '')
-      .toString()
-      .trim()
-    const wRaw = (idxWeight >= 0 ? cells[idxWeight] : '')
-      .toString()
-      .replace(',', '.')
-    const weight = Number.parseFloat(wRaw) || 0
-    res.push({ id, customer, city, weight })
+  const findByIncludes = (fragment) =>
+    headersLower.findIndex((h) => h.includes(fragment.toLowerCase()))
+
+  const idxMatchcode = findByIncludes('matchcode auftraggeber')
+  const idxAuftraggeber = findExact('auftraggeber') // kunden-nr.
+  const idxPlzLiefer = findByIncludes('plz lieferanschrift')
+  const idxOrtLiefer = findByIncludes('ort lieferanschrift')
+  const idxBelegdatum = findByIncludes('belegdatum')
+  const idxBelegart = findByIncludes('belegart')
+  let idxBelegnummer = findExact('belegnummer')
+  if (idxBelegnummer === -1) {
+    idxBelegnummer = findByIncludes('belegnummer')
   }
-  return res
+  const idxGewicht = findByIncludes('gesamtgewicht in kg')
+
+  function getCell(cells, idx) {
+    if (idx < 0 || idx >= cells.length) return ''
+    return cells[idx].toString().trim().replace(/^"|"$/g, '')
+  }
+
+  const rows = []
+
+  for (let i = 1; i < lines.length; i++) {
+    const raw = lines[i]
+    if (!raw.trim()) continue
+
+    const cells = splitLine(raw, delim)
+
+    const belegart = getCell(cells, idxBelegart)
+    if (!belegart || belegart.toLowerCase() !== 'lieferschein') {
+      continue // nur echte Lieferscheine
+    }
+
+    const id =
+      getCell(cells, idxBelegnummer) ||
+      `LS-${String(i).padStart(5, '0')}`
+
+    const customerNumber = getCell(cells, idxAuftraggeber)
+    const customerName = getCell(cells, idxMatchcode)
+    const zip = getCell(cells, idxPlzLiefer)
+    const city = getCell(cells, idxOrtLiefer)
+    const deliveryDate = getCell(cells, idxBelegdatum)
+
+    const wRaw = getCell(cells, idxGewicht).replace(',', '.')
+    const weight = Number.parseFloat(wRaw) || 0
+
+    rows.push({
+      id,
+      customerName,
+      customerNumber,
+      zip,
+      city,
+      deliveryDate,
+      weight,
+    })
+  }
+
+  return rows
 }
 
+// ; oder , erkennen
 function detectDelimiter(header) {
-  return (header.match(/;/g)?.length || 0) > (header.match(/,/g)?.length || 0)
-    ? ';'
-    : ','
+  const sc = (header.match(/;/g) || []).length
+  const cc = (header.match(/,/g) || []).length
+  return sc >= cc ? ';' : ','
 }
 
+// CSV Line Split mit Quotes-Unterstützung
 function splitLine(line, d) {
   const out = []
   let cur = ''
@@ -627,6 +772,10 @@ function splitLine(line, d) {
   out.push(cur)
   return out
 }
+
+/* -------------------------------------------------------------------------- */
+/*                              Tours & Analytics                             */
+/* -------------------------------------------------------------------------- */
 
 function ToursView() {
   const tours = [
@@ -707,13 +856,17 @@ function Metric({ label, value }) {
   )
 }
 
+/* -------------------------------------------------------------------------- */
+/*                             Add Order Modal                                */
+/* -------------------------------------------------------------------------- */
+
 function AddOrderModal({ open, onClose, onCreate }) {
-  const [customer, setCustomer] = useState('')
-  const [id, setId] = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [customerNumber, setCustomerNumber] = useState('')
+  const [id, setId] = useState('') // Belegnummer
   const [zip, setZip] = useState('')
   const [city, setCity] = useState('')
-  const [street, setStreet] = useState('')
-  const [country, setCountry] = useState('Deutschland')
+  const [deliveryDate, setDeliveryDate] = useState('')
   const [phone, setPhone] = useState('')
   const [notes, setNotes] = useState('')
   const [weight, setWeight] = useState('')
@@ -725,8 +878,8 @@ function AddOrderModal({ open, onClose, onCreate }) {
 
   function validate() {
     const e = {}
-    if (!customer.trim()) e.customer = 'Pflichtfeld'
-    const w = Number(weight)
+    if (!customerName.trim()) e.customerName = 'Pflichtfeld'
+    const w = Number(weight.replace(',', '.'))
     if (!(w > 0)) e.weight = 'Gewicht > 0'
     setErrors(e)
     return Object.keys(e).length === 0
@@ -734,11 +887,18 @@ function AddOrderModal({ open, onClose, onCreate }) {
 
   function submit() {
     if (!validate()) return
+    const w = Number(weight.replace(',', '.')) || 0
+
     onCreate({
       id: id.trim() || undefined,
-      customer: customer.trim(),
-      city: city.trim() || undefined,
-      weight: Number(weight),
+      customerName: customerName.trim(),
+      customerNumber: customerNumber.trim(),
+      zip: zip.trim(),
+      city: city.trim(),
+      deliveryDate: deliveryDate.trim(),
+      phone: phone.trim(),
+      notes: notes.trim(),
+      weight: w,
     })
   }
 
@@ -765,19 +925,29 @@ function AddOrderModal({ open, onClose, onCreate }) {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Field
-            label="Kunde"
+            label="Kunde (Matchcode)"
             required
-            error={errors.customer}
+            error={errors.customerName}
             icon={<User className="h-4 w-4" />}
           >
             <input
-              value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
-              placeholder="z. B. Daniel Schreiber"
+              placeholder="z. B. Ökostromerzeugung Schele"
             />
           </Field>
-          <Field label="Bestell-ID" icon={<Hash className="h-4 w-4" />}>
+
+          <Field label="Kunden-Nr." icon={<Hash className="h-4 w-4" />}>
+            <input
+              value={customerNumber}
+              onChange={(e) => setCustomerNumber(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
+              placeholder="z. B. 24167"
+            />
+          </Field>
+
+          <Field label="Beleg-Nr.">
             <input
               value={id}
               onChange={(e) => setId(e.target.value)}
@@ -786,36 +956,30 @@ function AddOrderModal({ open, onClose, onCreate }) {
             />
           </Field>
 
+          <Field label="Lieferscheindatum" icon={<Calendar className="h-4 w-4" />}>
+            <input
+              type="date"
+              value={deliveryDate}
+              onChange={(e) => setDeliveryDate(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-300"
+            />
+          </Field>
+
           <Field label="PLZ" icon={<MapPin className="h-4 w-4" />}>
             <input
               value={zip}
               onChange={(e) => setZip(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
-              placeholder="z. B. 78176"
+              placeholder="z. B. 72186"
             />
           </Field>
+
           <Field label="Ort" icon={<MapPin className="h-4 w-4" />}>
             <input
               value={city}
               onChange={(e) => setCity(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
-              placeholder="optional (wird später aus PLZ erkannt)"
-            />
-          </Field>
-
-          <Field label="Straße & Nr.">
-            <input
-              value={street}
-              onChange={(e) => setStreet(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
-              placeholder="optional"
-            />
-          </Field>
-          <Field label="Land">
-            <input
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
+              placeholder="z. B. Empfingen"
             />
           </Field>
 
@@ -827,13 +991,14 @@ function AddOrderModal({ open, onClose, onCreate }) {
               placeholder="optional"
             />
           </Field>
+
           <Field label="Gewicht (kg)" required error={errors.weight}>
             <input
               value={weight}
               onChange={(e) => setWeight(e.target.value)}
               inputMode="decimal"
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-indigo-300"
-              placeholder="z. B. 250"
+              placeholder="z. B. 250 oder 192,9"
             />
           </Field>
 
@@ -888,6 +1053,10 @@ function Field({ label, required, error, icon, children }) {
     </div>
   )
 }
+
+/* -------------------------------------------------------------------------- */
+/*                             Profile & Credits                              */
+/* -------------------------------------------------------------------------- */
 
 function ProfilePanel({ open, onClose }) {
   if (!open) return null
@@ -988,7 +1157,10 @@ function CreditsBadge() {
   )
 }
 
-// Kleine Hilfstests (optional, musst du nicht benutzen)
+/* -------------------------------------------------------------------------- */
+/*                       Kleine Test-Helfer (optional)                         */
+/* -------------------------------------------------------------------------- */
+
 export function runUiSanityTests() {
   const components = [
     NavioApp,
@@ -998,7 +1170,6 @@ export function runUiSanityTests() {
     OrdersView,
     ToursView,
     AnalyticsView,
-    Metric,
     CsvImportCard,
     ImportHistoryCard,
     AddOrderModal,
@@ -1013,8 +1184,8 @@ export function runUiSanityTests() {
     hasAddOrderModal: typeof AddOrderModal === 'function',
     hasProfile: typeof ProfilePanel === 'function',
     defaultView: 'orders',
-    hasPagination: typeof OrdersTable === 'function',
     apiUrlType: typeof API_URL,
+    optUrlType: typeof OPT_URL,
   }
 }
 
