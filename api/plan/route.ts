@@ -1,9 +1,8 @@
 // frontend/src/app/api/plan/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
-// WICHTIG: Der Token kommt NICHT hier rein!
-// Er wird nur über die Umgebungsvariable HF_TOKEN gelesen
-const HF_TOKEN = process.env.HF_TOKEN; // ← Render liefert ihn hier automatisch
+// Token kommt aus Render Environment (HF_TOKEN)
+const HF_TOKEN = process.env.HF_TOKEN;
 const HF_MODEL = 'meta-llama/Llama-3.2-3B-Instruct';
 const HF_URL = `https://api-inference.huggingface.co/models/${HF_MODEL}`;
 
@@ -15,22 +14,19 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(orders) || orders.length === 0) {
     return NextResponse.json({ error: 'Keine Bestellungen vorhanden' }, { status: 400 });
   }
+
   if (!HF_TOKEN) {
-    return NextResponse.json({ error: 'HF_TOKEN fehlt in den Environment-Variablen' }, { status: 500 });
+    return NextResponse.json({ error: 'HF_TOKEN fehlt in Environment-Variablen' }, { status: 500 });
   }
 
-  // Der Prompt – hier passiert die Magie
-  const prompt = `
-Du bist ein erfahrener Disponent bei einem Logistikunternehmen.
-Plane die bestmöglichen Touren mit folgenden Vorgaben:
-
+  // Prompt – zwingt die KI zu sauberem JSON
+  const prompt = `Du bist ein erfahrener Disponent in der Logistik.
 Depot: ${depot.name}, ${depot.street}, ${depot.zip} ${depot.city}
 Maximales Gewicht pro Tour: ${maxWeightKg} kg
-Wichtige Kriterien: PLZ-Nähe → gleiche Regionen zusammenfassen, Liefertermine beachten, Gewicht nicht überschreiten.
 
-Gib MIR NUR ein gültiges JSON zurück – nichts anderes, kein Kommentar, kein Erklärungstext!
+Plane optimale Touren. Gruppiere nach PLZ-Nähe, berücksichtige Liefertermine und Gewicht.
+Antworte AUSSCHLIESSLICH mit gültigem JSON – kein weiterer Text!
 
-Struktur:
 {
   "tours": [
     {
@@ -38,7 +34,7 @@ Struktur:
       "name": "Tour Ruhrgebiet",
       "region": "Nordrhein-Westfalen",
       "deliveryWindow": "Vormittag",
-      "orders": [ /* komplette Bestell-Objekte hier rein */ ],
+      "orders": [/* komplette Bestellobjekte hier */],
       "weight": 987.4,
       "stops": 6,
       "distance": 142,
@@ -49,38 +45,50 @@ Struktur:
 }
 
 Bestellungen:
-${JSON.stringify(orders, null, 2)}
-`;
+${JSON.stringify(orders, null, 2)}`;
 
   try {
     const response = await fetch(HF_URL, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${HF_TOKEN}`, // ← hier wird dein neuer Token eingesetzt (automatisch von Render)
+        Authorization: `Bearer ${HF_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         inputs: prompt,
         parameters: {
-          max_new_tokens: 1800,
+          max_new_tokens: 2000,
           temperature: 0.7,
           return_full_text: false,
+          wait_for_model: true,   // wartet, bis Modell bereit ist
+          max_time: 90,           // max. 90 Sekunden warten
         },
       }),
     });
 
+    // ----- ROBUSTE Fehlerbehandlung (das rettet uns vor "Unexpected end of JSON") -----
+    const text = await response.text(); // immer als Text lesen!
+
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Hugging Face API Fehler ${response.status}: ${err}`);
+      console.error('Hugging Face Fehler:', response.status, text);
+      // Fallback-Tour, damit die App nie crasht
+      return fallbackResponse(orders, 'KI gerade beschäftigt – Fallback aktiv');
     }
 
-    const data = await response.json();
-    let generated = data[0]?.generated_text || '';
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.error('HF hat kein JSON zurückgegeben:', text);
+      return fallbackResponse(orders, 'Antwort ungültig – Fallback');
+    }
 
-    // LLM gibt manchmal Text drumherum → wir extrahieren nur den JSON-Block
+    const generated = data[0]?.generated_text || '';
     const jsonMatch = generated.match(/\{[\s\S]*\}/);
+
     if (!jsonMatch) {
-      throw new Error('KI hat kein gültiges JSON zurückgegeben');
+      console.warn('Kein JSON im Output gefunden:', generated);
+      return fallbackResponse(orders, 'Kein JSON gefunden – Fallback');
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
@@ -90,11 +98,31 @@ ${JSON.stringify(orders, null, 2)}
       tours,
       meta: parsed.meta || meta || { strategy: 'KI-Planung' },
     });
+
   } catch (error: any) {
-    console.error('KI-Planung fehlgeschlagen:', error);
-    return NextResponse.json(
-      { error: 'Tourenplanung fehlgeschlagen: ' + error.message },
-      { status: 500 }
-    );
+    console.error('Unerwarteter Fehler in /api/plan:', error);
+    return fallbackResponse(orders, 'Unbekannter Fehler – bitte gleich nochmal');
   }
+}
+
+// Hilfsfunktion für schöne Fallback-Touren (verhindert Crash)
+function fallbackResponse(orders: any[], reason: string) {
+  const totalWeight = orders.reduce((s: number, o: any) => s + (o.weight || 0), 0);
+
+  return NextResponse.json({
+    tours: [
+      {
+        id: 'Fallback-1',
+        name: 'Einzel-Tour (Fallback)',
+        region: 'Deutschland',
+        deliveryWindow: 'Ganztägig',
+        orders: orders,
+        weight: totalWeight,
+        stops: orders.length,
+        distance: Math.round(totalWeight / 3), // grobe Schätzung
+        aiScore: 65,
+      },
+    ],
+    meta: { strategy: `Fallback – ${reason}` },
+  });
 }
