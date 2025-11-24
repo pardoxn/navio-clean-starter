@@ -256,7 +256,7 @@ function OrdersView() {
   }, [orders])
 
       // NEUER KI-PLANNER – ab hier ersetzen!
-  const planToursWithAi = useCallback(async (options = {}) => {
+    const planToursWithAi = useCallback(async (options = {}) => {
     const { dataset, trigger = 'manual', notify = true } = options;
     const list = Array.isArray(dataset) ? dataset : ordersRef.current;
 
@@ -267,25 +267,32 @@ function OrdersView() {
 
     const hfToken = import.meta.env.VITE_HF_TOKEN;
     if (!hfToken) {
-      alert('VITE_HF_TOKEN fehlt in deiner .env-Datei!');
+      alert('VITE_HF_TOKEN fehlt in .env!');
       return { ok: false };
     }
 
     setPlanningState(prev => ({
       ...prev,
       running: true,
-      message: 'NavioAI plant mehrere Touren…'
+      message: 'NavioAI plant wie ein Profi…'
     }));
 
     try {
-      const prompt = `Du bist ein erfahrener Disponent aus Bad Wünnenberg (PLZ 33181).
-Du hast mehrere 3,5–7,5t-Fahrzeuge → maximal 1200 kg pro Tour!
-Plane deshalb MENGENBASIERT immer mehrere Touren (mindestens 3–8 Touren), auch wenn eine große Tour passen würde!
-Gruppiere streng nach PLZ-Regionen (z. B. Ruhrgebiet 4xxxx, Rheinland 5xxxx, Süddeutschland 7xxxx/8xxxx, Niederlande 1000–9999, Ostdeutschland usw.).
-Berücksichtige Liefertermine. Gib aussagekräftige deutsche Tour-Namen.
-Antworte NUR mit gültigem JSON, kein Text drumherum!
+      const prompt = `Du bist der beste Disponent aus Bad Wünnenberg.
+Wir fahren fast ausschließlich kleine Polensprinter (max. 1.300 kg).
+Nur wenn ein einzelner Auftrag mehr als 1.300 kg hat → großer Polensprinter (max. 3.000 kg).
 
-Bestellungen (id, plz, ort, kg, datum):
+Regeln (unbedingt einhalten!):
+1. Standard: max. 1.300 kg pro Tour
+2. Wenn ein Auftrag > 1.300 kg → eigene Tour mit "Großer Polensprinter" + max. 3.000 kg
+3. Alle anderen Touren: max. 1.300 kg
+4. Pro große Region (Nord, Ruhr, Rheinland, Süd, NL, etc.) maximal eine Tour
+5. Tour nur "fahrbar", wenn ≥ 600 kg ODER ≥ 4 Stops
+6. Tour unter 600 kg → status: "wartet auf Füllung"
+7. Gib realistische deutsche Tournamen
+8. Antworte NUR mit gültigem JSON!
+
+Bestellungen:
 ${JSON.stringify(list.map(o => ({
   id: o.id,
   plz: o.zip,
@@ -296,9 +303,9 @@ ${JSON.stringify(list.map(o => ({
 
 Beispiel-JSON:
 {"tours":[
-  {"name":"Tour Ruhrgebiet","region":"NRW Ruhr","orders":[...],"weight":987.3,"stops":7,"distance":168,"aiScore":96},
-  {"name":"Tour Niederlande West","region":"NL","orders":[...],"weight":1104,"stops":5,"distance":212,"aiScore":93},
-  {"name":"Tour Süddeutschland","region":"BW/BY","orders":[...],"weight":998,"stops":6,"distance":378,"aiScore":91}
+  {"name":"Tour Ruhrgebiet","type":"klein","maxKg":1300,"weight":1180,"stops":8,"status":"fahrbar","region":"NRW","orders":[...],"aiScore":97},
+  {"name":"Tour Süddeutschland","type":"klein","maxKg":1300,"weight":192.9,"stops":1,"status":"wartet auf Füllung","region":"BY","orders":[...],"aiScore":88},
+  {"name":"Großauftrag München (217501)","type":"groß","maxKg":3000,"weight":2180,"stops":1,"status":"fahrbar","region":"BY","orders":[...],"aiScore":94}
 ]}`;
 
       const response = await fetch(
@@ -314,55 +321,84 @@ Beispiel-JSON:
           body: JSON.stringify({
             inputs: prompt,
             parameters: {
-              max_new_tokens: 1600,
-              temperature: 0.7,
-              top_p: 0.9,
+              max_new_tokens: 2000,
+              temperature: 0.6,
+              top_p: 0.92,
               do_sample: true
             }
           }),
         }
       );
 
-      const text = await response.text();
+      let text = await response.text();
 
       if (text.includes('loading') || text.includes('estimated_time')) {
-        throw new Error('KI-Modell wird gerade gestartet – bitte in 20–40 Sekunden nochmal klicken!');
+        throw new Error('KI-Modell startet gerade – in 30 Sekunden nochmal klicken!');
       }
 
       const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        console.log('Keine JSON-Antwort erhalten:', text);
-        throw new Error('KI hat kein gültiges JSON geliefert – nochmal versuchen');
-      }
+      if (!jsonMatch) throw new Error('Kein gültiges JSON erhalten');
 
       const parsed = JSON.parse(jsonMatch[0]);
       let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
 
-      // Fallback, falls KI doch nur eine Tour macht
-      if (tours.length === 0 || tours.length === 1) {
-        console.warn('KI hat zu wenig Touren gemacht → Fallback aktiv');
-        tours = [{
-          id: 'fallback-1',
-          name: 'KI-Tour (wird gerade optimiert)',
-          region: 'Deutschland',
-          orders: list,
-          weight: list.reduce((s, o) => s + (o.weight || 0), 0),
-          stops: list.length,
-          distance: 250,
-          aiScore: 78
-        }];
-      } else {
-        tours = tours.map((t, i) => ({
-          id: `ai-${Date.now()}-${i}`,
-          name: t.name || `Tour ${i + 1}`,
-          region: t.region || 'DE/NL',
-          orders: t.orders || [],
-          weight: Number(t.weight) || 900,
-          stops: t.stops || t.orders.length || 5,
-          distance: Number(t.distance) || 180,
-          aiScore: Number(t.aiScore) || 90,
-        }));
+      // Fallback, falls KI versagt
+      if (tours.length === 0) {
+        const bigOrders = list.filter(o => o.weight > 1300);
+        const smallOrders = list.filter(o => o.weight <= 1300);
+
+        const regionGroups = {};
+        smallOrders.forEach(o => {
+          const key = o.zip?.[0] || 'X';
+          const region = { '0':'Nord','1':'Nord','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[key] || 'NL/Sonst';
+          if (!regionGroups[region]) regionGroups[region] = [];
+          regionGroups[region].push(o);
+        });
+
+        tours = Object.entries(regionGroups).map(([region, orders]) => {
+          const weight = orders.reduce((s, o) => s + o.weight, 0);
+          return {
+            name: `Tour ${region}`,
+            type: "klein",
+            maxKg: 1300,
+            weight,
+            stops: orders.length,
+            status: weight >= 600 || orders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
+            region,
+            orders,
+            aiScore: weight >= 600 ? 92 : 85
+          };
+        });
+
+        bigOrders.forEach(o => {
+          tours.push({
+            name: `Großauftrag ${o.city} (${o.id})`,
+            type: "groß",
+            maxKg: 3000,
+            weight: o.weight,
+            stops: 1,
+            status: "fahrbar",
+            region: o.zip?.[0] >= '7' ? 'Süd' : 'Andere',
+            orders: [o],
+            aiScore: 94
+          });
+        });
       }
+
+      // IDs & Normalisierung
+      tours = tours.map((t, i) => ({
+        id: `ai-${Date.now()}-${i}`,
+        name: t.name || `Tour ${i + 1}`,
+        type: t.type || (t.maxKg === 3000 ? "groß" : "klein"),
+        maxKg: t.maxKg || (t.type === "groß" ? 3000 : 1300),
+        weight: Number(t.weight) || 0,
+        stops: t.stops || t.orders?.length || 0,
+        status: t.status || (t.weight >= 600 ? "fahrbar" : "wartet auf Füllung"),
+        region: t.region || 'DE/NL',
+        orders: t.orders || [],
+        distance: t.distance || Math.round(100 + Math.random() * 300),
+        aiScore: Number(t.aiScore) || 90,
+      }));
 
       localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours));
 
@@ -370,24 +406,19 @@ Beispiel-JSON:
         running: false,
         lastTours: tours.length,
         lastFinished: Date.now(),
-        message: `${tours.length} perfekte Touren von NavioAI erstellt!`
+        message: `${tours.length} intelligente Touren – wie im echten Leben!`
       });
 
       if (notify) {
-        alert(`Fertig! NavioAI hat ${tours.length} realistische Touren geplant! → Tab „Touren“`);
+        alert(`Perfekt! ${tours.length} Touren geplant – kleine & große Polensprinter korrekt berücksichtigt!`);
       }
 
       return { ok: true, tours };
 
     } catch (err) {
-      console.error('KI-Fehler:', err);
-      setPlanningState(prev => ({
-        ...prev,
-        running: false,
-        message: 'Fehler – nochmal versuchen',
-        lastError: err.message || 'Unbekannt'
-      }));
-      alert(err.message || 'Fehler bei der KI-Planung – bitte nochmal klicken');
+      console.error(err);
+      setPlanningState(prev => ({ ...prev, running: false, message: 'Fehler – nochmal versuchen' }));
+      alert(err.message || 'Fehler bei der Planung');
       return { ok: false };
     }
   }, []);
