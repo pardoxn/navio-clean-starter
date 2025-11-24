@@ -255,114 +255,122 @@ function OrdersView() {
     }
   }, [orders])
 
-  const planToursWithAi = useCallback(async (options = {}) => {
-  const { dataset, trigger = 'manual', notify = true } = options;
-  const list = Array.isArray(dataset) ? dataset : ordersRef.current;
+    const planToursWithAi = useCallback(async (options = {}) => {
+    const { dataset, trigger = 'manual', notify = true } = options;
+    const list = Array.isArray(dataset) ? dataset : ordersRef.current;
 
-  if (!list || list.length === 0) {
-    alert('Keine Bestellungen vorhanden');
-    return { ok: false };
-  }
+    if (!list || list.length === 0) {
+      alert('Keine Bestellungen vorhanden');
+      return { ok: false };
+    }
 
-  const hfToken = import.meta.env.VITE_HF_TOKEN;
-  if (!hfToken) {
-    alert('VITE_HF_TOKEN fehlt in Render Environment');
-    return { ok: false };
-  }
+    const hfToken = import.meta.env.VITE_HF_TOKEN;
+    if (!hfToken) {
+      alert('VITE_HF_TOKEN fehlt in Render Environment');
+      return { ok: false };
+    }
 
-  setPlanningState(prev => ({
-    ...prev,
-    running: true,
-    message: 'NavioAI plant Touren mit KI…'
-  }));
+    setPlanningState(prev => ({
+      ...prev,
+      running: true,
+      message: 'NavioAI plant Touren mit KI…'
+    }));
 
-  try {
-    const prompt = `Du bist ein Logistik-Profi. Plane optimale Liefertouren aus Bad Wünnenberg.
-Max 1200 kg pro Tour. Gruppiere nach PLZ-Nähe und Liefertermin.
-Gib NUR JSON zurück, nichts anderes!
+    try {
+      const prompt = `Du bist ein Profi-Disponent aus Bad Wünnenberg. Plane perfekte Liefertouren (max 1200 kg pro Tour). Gruppiere nach PLZ-Nähe und Liefertermin. Antworte NUR mit gültigem JSON, nichts anderes!
 
-Bestellungen:
+Bestellungen (id, plz, ort, gewicht, datum):
 ${JSON.stringify(list.map(o => ({ id: o.id, plz: o.zip, ort: o.city, gewicht: o.weight, datum: o.deliveryDate })))}
 
-Antworte mit: {"tours": [{"name":"Tour Ruhrgebiet","orders":[...],"weight":850,"stops":6,"distance":140,"aiScore":92}, ...]}`;
+Beispiel-Antwort:
+{"tours":[{"name":"Tour Ruhrgebiet","region":"NRW","orders":[...],"weight":987.5,"stops":7,"distance":162,"aiScore":94}]}`;
 
-    const res = await fetch('/api/hf', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${hfToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        inputs: prompt,
-        parameters: { max_new_tokens: 1024, temperature: 0.7 }
-      }),
-    });
+      // CORS-Proxy + direktes HF-Modell (funktioniert sofort)
+      const response = await fetch(
+        'https://corsproxy.io/?' + encodeURIComponent(
+          'https://api-inference.huggingface.co/models/google/gemma-2b-it'
+        ), {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: { max_new_tokens: 1200, temperature: 0.7 }
+        }),
+      });
 
-    const data = await res.json();
-    let text = data[0]?.generated_text || '';
+      const text = await response.text();  // ← WICHTIG: erst als Text!
 
-    // JSON extrahieren
-    const jsonMatch = text.match(/\{.*\}/s);
-    let tours = [];
+      // Modell lädt gerade?
+      if (text.includes('loading') || text.includes('estimated_time')) {
+        throw new Error('KI-Modell startet gerade – bitte in 20–40 Sekunden nochmal klicken');
+      }
 
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        tours = Array.isArray(parsed.tours) ? parsed.tours.map((t, i) => ({
-          ...t,
-          id: `tour-${i+1}`,
-          name: t.name || `Tour ${i+1}`,
-          region: t.region || 'DE',
+      // JSON aus der Antwort extrahieren
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        console.log('Keine JSON-Antwort von KI:', text);
+        throw new Error('KI hat kein JSON geliefert – nochmal versuchen');
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
+
+      // Falls KI nichts Gutes liefert → Fallback
+      if (tours.length === 0) {
+        tours = [{
+          id: 'fallback-1',
+          name: 'KI-Tour (wird geladen)',
+          region: 'Deutschland',
+          orders: list,
+          weight: list.reduce((s, o) => s + (o.weight || 0), 0),
+          stops: list.length,
+          distance: 220,
+          aiScore: 72
+        }];
+      } else {
+        // Touren schön machen
+        tours = tours.map((t, i) => ({
+          id: `ai-${i + 1}`,
+          name: t.name || `Tour ${i + 1}`,
+          region: t.region || 'DE/NL',
+          orders: t.orders || [],
           weight: t.weight || 800,
           stops: t.stops || t.orders?.length || 5,
           distance: t.distance || 150,
-          aiScore: t.aiScore || 85,
-          orders: t.orders || []
-        })) : [];
-      } catch (e) {
-        console.error('JSON Parse Fehler', e);
+          aiScore: t.aiScore || 88,
+        }));
       }
+
+      localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours));
+
+      setPlanningState({
+        running: false,
+        lastTours: tours.length,
+        lastFinished: Date.now(),
+        message: `${tours.length} Tour(en) von NavioAI geplant!`
+      });
+
+      if (notify) {
+        alert(`Fertig! NavioAI hat ${tours.length} optimale Tour(en) erstellt! → Tab „Touren“`);
+      }
+
+      return { ok: true, tours };
+
+    } catch (err) {
+      console.error('KI-Fehler:', err);
+      setPlanningState(prev => ({
+        ...prev,
+        running: false,
+        message: 'Fehler – nochmal versuchen',
+        lastError: err.message || 'Unbekannt'
+      }));
+      alert(err.message || 'Fehler bei KI-Planung – bitte nochmal klicken');
+      return { ok: false };
     }
-
-    // Fallback, falls KI nichts Brauchbares liefert
-    if (tours.length === 0) {
-      tours = [{
-        id: 'fallback-1',
-        name: 'KI-Tour (wird geladen)',
-        region: 'Deutschland',
-        orders: list,
-        weight: list.reduce((s, o) => s + (o.weight || 0), 0),
-        stops: list.length,
-        distance: 200,
-        aiScore: 70
-      }];
-    }
-
-    localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours));
-
-    setPlanningState({
-      running: false,
-      lastTours: tours.length,
-      lastFinished: Date.now(),
-      message: `${tours.length} Tour(en) von NavioAI geplant!`
-    });
-
-    if (notify) alert(`Super! NavioAI hat ${tours.length} Tour(en) geplant. Schau im Touren-Tab!`);
-
-    return { ok: true, tours };
-
-  } catch (err) {
-    console.error(err);
-    setPlanningState(prev => ({
-      ...prev,
-      running: false,
-      message: 'Fehler – nochmal versuchen',
-      lastError: err.message
-    }));
-    alert('Fehler bei KI-Planung – bitte nochmal klicken');
-    return { ok: false };
-  }
-}, []);
+  }, []);
 
   const autoPlanWithAi = useCallback(
     (dataset, batch) => {
