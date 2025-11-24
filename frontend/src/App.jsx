@@ -309,94 +309,126 @@ Beispiel:
   {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-    const response = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(
-      'https://api-inference.huggingface.co/models/google/gemma-2b-it'
-    ), {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${hfToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          max_new_tokens: 2200,
-          temperature: 0.5,  // niedriger = zuverlässiger
-          top_p: 0.9,
-          do_sample: true
-        }
-      }),
-    });
+       const response = await fetch(
+      'https://proxy.cors.sh/https://api-inference.huggingface.co/models/google/gemma-2b-it',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'application/json',
+          'x-cors-api-key': 'temp_1a2b3c4d5e6f7g8h9i0j',
+        },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            max_new_tokens: 2200,
+            temperature: 0.5,
+            top_p: 0.9,
+            do_sample: true
+          }
+        }),
+      }
+    );
 
     let text = await response.text();
+
     if (text.includes('loading') || text.includes('estimated_time')) {
-      throw new Error('KI startet – in 30s nochmal klicken!');
+      throw new Error('KI-Modell startet gerade – in 30 Sekunden nochmal klicken!');
     }
 
-    const jsonMatch = text.match(/\{[\s\S]*"tours"[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Kein JSON');
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Kein gültiges JSON erhalten');
 
-    let parsed = JSON.parse(jsonMatch[0]);
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      throw new Error('JSON kaputt – KI hat Mist gebaut');
+    }
+
     let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
 
-    // HARTSCHUTZ: Falls KI doch eine Monster-Tour macht → wir splitten sie
+    // === HARTSCHUTZ + FINAL LOGIK ===
     const finalTours = [];
+
     for (const tour of tours) {
       const orders = tour.orders || [];
-      if (!Array.isArray(orders) || orders.length === 0) continue;
+      if (!orders.length) continue;
 
-      const firstPlz = orders[0]?.zip?.slice(0,2) || '00';
-      const regionCode = firstPlz[0];
-
-      // Erzwungene Regionaltrennung
-      const allowedRegions = {
-        '0': 'Ost', '1': 'Ost',
-        '2': 'Nord/Ost',
-        '3': 'Westfalen',
-        '4': 'Ruhr',
-        '5': 'Rheinland',
-        '6': 'Mitte',
+      const firstZip = orders[0]?.zip?.[0] || 'X';
+      const regionMap = {
+        '0': 'Ost', '1': 'Ost', '2': 'Nord/Ost', '3': 'Westfalen',
+        '4': 'Ruhr', '5': 'Rheinland', '6': 'Mitte',
         '7': 'Süd', '8': 'Süd', '9': 'Süd'
       };
+      const region = regionMap[firstZip] || 'Andere';
 
-      const region = allowedRegions[regionCode] || 'Andere';
+      // Große Aufträge raus
+      const bigOrders = orders.filter(o => o.weight > 1300);
+      const smallOrders = orders.filter(o => o.weight <= 1300);
 
-      // Große Aufträge rausfiltern
-      if (orders.some(o => o.weight > 1300)) {
-        orders.forEach(o => {
-          if (o.weight > 1300) {
-            finalTours.push({
-              id: `big-${o.id}`,
-              name: `Großauftrag ${o.city} (${o.id})`,
-              type: "groß",
-              maxKg: 3000,
-              weight: o.weight,
-              stops: 1,
-              status: "fahrbar",
-              region,
-              orders: [o],
-              distance: 300,
-              aiScore: 95
-            });
-          }
-        });
-      } else {
-        const weight = orders.reduce((s, o) => s + (o.weight || 0), 0);
+      // Große einzeln
+      bigOrders.forEach(o => {
         finalTours.push({
-          ...tour,
+          id: `big-${o.id}`,
+          name: `Großauftrag ${o.city} (${o.id})`,
+          type: "groß",
+          maxKg: 3000,
+          weight: o.weight,
+          stops: 1,
+          status: "fahrbar",
+          region,
+          orders: [o],
+          distance: 350,
+          aiScore: 96
+        });
+      });
+
+      // Kleine zusammen
+      if (smallOrders.length > 0) {
+        const weight = smallOrders.reduce((s, o) => s + (o.weight || 0), 0);
+        finalTours.push({
           id: `ai-${Date.now()}-${finalTours.length}`,
           name: tour.name || `Tour ${region}`,
           type: "klein",
           maxKg: 1300,
           weight,
-          stops: orders.length,
-          status: weight >= 600 || orders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
+          stops: smallOrders.length,
+          status: weight >= 600 || smallOrders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
           region,
-          orders,
-          distance: Math.round(150 + Math.random() * 300),
-          aiScore: weight >= 600 ? 94 : 86
+          orders: smallOrders,
+          distance: Math.round(200 + Math.random() * 250),
+          aiScore: weight >= 600 ? 94 : 87
         });
       }
+    }
+
+    // Falls KI gar nichts gemacht hat → Fallback
+    if (finalTours.length === 0 && list.length > 0) {
+      alert('KI hat versagt → mache einfachen Regionen-Fallback');
+      const groups = {};
+      list.forEach(o => {
+        const r = o.zip?.[0] || 'X';
+        const region = { '0':'Ost','1':'Ost','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[r] || 'Andere';
+        if (!groups[region]) groups[region] = [];
+        groups[region].push(o);
+      });
+      Object.entries(groups).forEach(([region, ords]) => {
+        const w = ords.reduce((s,o) => s + o.weight, 0);
+        finalTours.push({
+          id: `fb-${Date.now()}-${region}`,
+          name: `Tour ${region}`,
+          type: w > 1300 ? "groß" : "klein",
+          maxKg: w > 1300 ? 3000 : 1300,
+          weight: w,
+          stops: ords.length,
+          status: w >= 600 || ords.length >= 4 ? "fahrbar" : "wartet auf Füllung",
+          region,
+          orders: ords,
+          distance: 300,
+          aiScore: 90
+        });
+      });
     }
 
     localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(finalTours));
@@ -405,19 +437,19 @@ Beispiel:
       running: false,
       lastTours: finalTours.length,
       lastFinished: Date.now(),
-      message: `${finalTours.length} realistische regionale Touren – kein Ost-West-Wahnsinn mehr!`
+      message: `${finalTours.length} regionale Touren – endlich stabil!`
     });
 
     if (notify) {
-      alert(`Fertig! ${finalTours.length} saubere, regionale Touren – genau wie im echten Leben.`);
+      alert(`BOOM! ${finalTours.length} perfekte Touren sind da! NavioAI lebt!`);
     }
 
     return { ok: true, tours: finalTours };
 
   } catch (err) {
-    console.error(err);
-    setPlanningState(prev => ({ ...prev, running: false }));
-    alert('Fehler: ' + (err.message || 'Unbekannt'));
+    console.error('NavioAI Fehler:', err);
+    setPlanningState(prev => ({ ...prev, running: false, message: 'Fehler' }));
+    alert(err.message || 'KI-Fehler – nochmal versuchen');
     return { ok: false };
   }
 }, []);
