@@ -309,26 +309,15 @@ Beispiel:
   {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-           const response = await fetch(
-      'https://proxy.cors.sh/https://api-inference.huggingface.co/models/google/gemma-2b-it',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${hfToken}`,
-          'Content-Type': 'application/json',
-          'x-cors-api-key': 'temp_1a2b3c4d5e6f7g8h9i0j',
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            max_new_tokens: 2200,
-            temperature: 0.5,
-            top_p: 0.9,
-            do_sample: true
-          }
-        }),
-      }
-    );
+           const response = await fetch(`${OPT_URL || 'https://navio-backend.onrender.com'}/optimize`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    depot,
+    maxWeightKg: 1300,
+    orders: list
+  }),
+});
 
     let text = await response.text();  // ← DAS FEHLTETE!
 
