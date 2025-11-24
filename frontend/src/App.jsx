@@ -309,7 +309,7 @@ Beispiel:
   {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-    const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(
+    const response = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(
       'https://api-inference.huggingface.co/models/google/gemma-2b-it'
     ), {
       method: 'POST',
