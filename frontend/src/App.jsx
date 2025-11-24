@@ -286,7 +286,7 @@ ${JSON.stringify(list.map(o => ({ id: o.id, plz: o.zip, ort: o.city, gewicht: o.
 
 Antworte mit: {"tours": [{"name":"Tour Ruhrgebiet","orders":[...],"weight":850,"stops":6,"distance":140,"aiScore":92}, ...]}`;
 
-    const res = await fetch('https://api-inference.huggingface.co/models/google/gemma-2b-it', {
+    const res = await fetch('/api/hf', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${hfToken}`,

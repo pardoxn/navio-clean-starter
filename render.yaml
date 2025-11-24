@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: navio-frontend
+    env: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    routes:
+      - type: rewrite
+        source: /api/hf
+        destination: /server/proxy.js
+
+preDeployCommand: echo "Deploying NavioAI..."
