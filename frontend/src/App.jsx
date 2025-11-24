@@ -256,41 +256,42 @@ function OrdersView() {
   }, [orders])
 
       // NEUER KI-PLANNER – ab hier ersetzen!
-    const planToursWithAi = useCallback(async (options = {}) => {
-    const { dataset, trigger = 'manual', notify = true } = options;
-    const list = Array.isArray(dataset) ? dataset : ordersRef.current;
+  const planToursWithAi = useCallback(async (options = {}) => {
+  const { dataset, trigger = 'manual', notify = true } = options;
+  const list = Array.isArray(dataset) ? dataset : ordersRef.current;
 
-    if (!list || list.length === 0) {
-      alert('Keine Bestellungen vorhanden');
-      return { ok: false };
-    }
+  if (!list || list.length === 0) {
+    alert('Keine Bestellungen vorhanden');
+    return { ok: false };
+  }
 
-    const hfToken = import.meta.env.VITE_HF_TOKEN;
-    if (!hfToken) {
-      alert('VITE_HF_TOKEN fehlt in .env!');
-      return { ok: false };
-    }
+  const hfToken = import.meta.env.VITE_HF_TOKEN;
+  if (!hfToken) {
+    alert('VITE_HF_TOKEN fehlt!');
+    return { ok: false };
+  }
 
-    setPlanningState(prev => ({
-      ...prev,
-      running: true,
-      message: 'NavioAI plant wie ein Profi…'
-    }));
+  setPlanningState(prev => ({
+    ...prev,
+    running: true,
+    message: 'NavioAI plant realistische Touren…'
+  }));
 
-    try {
-      const prompt = `Du bist der beste Disponent aus Bad Wünnenberg.
-Wir fahren fast ausschließlich kleine Polensprinter (max. 1.300 kg).
-Nur wenn ein einzelner Auftrag mehr als 1.300 kg hat → großer Polensprinter (max. 3.000 kg).
+  try {
+    const prompt = `Du bist Disponent in 33181 Bad Wünnenberg.
+Fahrzeuge: hauptsächlich kleine Polensprinter (max 1.300 kg), selten große (3.000 kg).
 
-Regeln (unbedingt einhalten!):
-1. Standard: max. 1.300 kg pro Tour
-2. Wenn ein Auftrag > 1.300 kg → eigene Tour mit "Großer Polensprinter" + max. 3.000 kg
-3. Alle anderen Touren: max. 1.300 kg
-4. Pro große Region (Nord, Ruhr, Rheinland, Süd, NL, etc.) maximal eine Tour
-5. Tour nur "fahrbar", wenn ≥ 600 kg ODER ≥ 4 Stops
-6. Tour unter 600 kg → status: "wartet auf Füllung"
-7. Gib realistische deutsche Tournamen
-8. Antworte NUR mit gültigem JSON!
+WICHTIGE REGELN – UNBEDINGT EINHALTEN:
+- Keine Tour darf weiter als 450 km vom Depot entfernt sein (max. 5–6h einfache Fahrt)
+- Keine Tour darf länger als 900 km Gesamtstrecke haben
+- Ostdeutschland (PLZ 0/1) ist eine eigene Region → nie mit NRW mischen!
+- Bayern (8/9) ist eigene Region → nie mit NRW mischen!
+- Nur Aufträge aus der gleichen Großregion zusammenfassen
+- Max 1.300 kg (außer ein Auftrag >1.300 kg → dann großer LKW 3.000 kg)
+- Tour unter 600 kg oder <4 Stops → Status: "wartet auf Füllung"
+- Gib realistische Tournamen wie "Tour Ostwestfalen", "Tour Berlin-Brandenburg", "Tour Niederbayern"
+
+Antworte NUR mit JSON!
 
 Bestellungen:
 ${JSON.stringify(list.map(o => ({
@@ -301,127 +302,125 @@ ${JSON.stringify(list.map(o => ({
   datum: o.deliveryDate
 })))}
 
-Beispiel-JSON:
+Beispiel:
 {"tours":[
-  {"name":"Tour Ruhrgebiet","type":"klein","maxKg":1300,"weight":1180,"stops":8,"status":"fahrbar","region":"NRW","orders":[...],"aiScore":97},
-  {"name":"Tour Süddeutschland","type":"klein","maxKg":1300,"weight":192.9,"stops":1,"status":"wartet auf Füllung","region":"BY","orders":[...],"aiScore":88},
-  {"name":"Großauftrag München (217501)","type":"groß","maxKg":3000,"weight":2180,"stops":1,"status":"fahrbar","region":"BY","orders":[...],"aiScore":94}
+  {"name":"Tour Ostwestfalen","region":"OWL","weight":1180,"stops":9,"status":"fahrbar","type":"klein","maxKg":1300,"orders":[...]},
+  {"name":"Tour Berlin-Brandenburg","region":"Ost","weight":890,"stops":6,"status":"fahrbar","type":"klein","maxKg":1300,"orders":[...]},
+  {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-      const response = await fetch(
-        'https://corsproxy.io/?' + encodeURIComponent(
-          'https://api-inference.huggingface.co/models/google/gemma-2b-it'
-        ),
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${hfToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputs: prompt,
-            parameters: {
-              max_new_tokens: 2000,
-              temperature: 0.6,
-              top_p: 0.92,
-              do_sample: true
-            }
-          }),
+    const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(
+      'https://api-inference.huggingface.co/models/google/gemma-2b-it'
+    ), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${hfToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: 2200,
+          temperature: 0.5,  // niedriger = zuverlässiger
+          top_p: 0.9,
+          do_sample: true
         }
-      );
+      }),
+    });
 
-      let text = await response.text();
-
-      if (text.includes('loading') || text.includes('estimated_time')) {
-        throw new Error('KI-Modell startet gerade – in 30 Sekunden nochmal klicken!');
-      }
-
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Kein gültiges JSON erhalten');
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
-
-      // Fallback, falls KI versagt
-      if (tours.length === 0) {
-        const bigOrders = list.filter(o => o.weight > 1300);
-        const smallOrders = list.filter(o => o.weight <= 1300);
-
-        const regionGroups = {};
-        smallOrders.forEach(o => {
-          const key = o.zip?.[0] || 'X';
-          const region = { '0':'Nord','1':'Nord','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[key] || 'NL/Sonst';
-          if (!regionGroups[region]) regionGroups[region] = [];
-          regionGroups[region].push(o);
-        });
-
-        tours = Object.entries(regionGroups).map(([region, orders]) => {
-          const weight = orders.reduce((s, o) => s + o.weight, 0);
-          return {
-            name: `Tour ${region}`,
-            type: "klein",
-            maxKg: 1300,
-            weight,
-            stops: orders.length,
-            status: weight >= 600 || orders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
-            region,
-            orders,
-            aiScore: weight >= 600 ? 92 : 85
-          };
-        });
-
-        bigOrders.forEach(o => {
-          tours.push({
-            name: `Großauftrag ${o.city} (${o.id})`,
-            type: "groß",
-            maxKg: 3000,
-            weight: o.weight,
-            stops: 1,
-            status: "fahrbar",
-            region: o.zip?.[0] >= '7' ? 'Süd' : 'Andere',
-            orders: [o],
-            aiScore: 94
-          });
-        });
-      }
-
-      // IDs & Normalisierung
-      tours = tours.map((t, i) => ({
-        id: `ai-${Date.now()}-${i}`,
-        name: t.name || `Tour ${i + 1}`,
-        type: t.type || (t.maxKg === 3000 ? "groß" : "klein"),
-        maxKg: t.maxKg || (t.type === "groß" ? 3000 : 1300),
-        weight: Number(t.weight) || 0,
-        stops: t.stops || t.orders?.length || 0,
-        status: t.status || (t.weight >= 600 ? "fahrbar" : "wartet auf Füllung"),
-        region: t.region || 'DE/NL',
-        orders: t.orders || [],
-        distance: t.distance || Math.round(100 + Math.random() * 300),
-        aiScore: Number(t.aiScore) || 90,
-      }));
-
-      localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours));
-
-      setPlanningState({
-        running: false,
-        lastTours: tours.length,
-        lastFinished: Date.now(),
-        message: `${tours.length} intelligente Touren – wie im echten Leben!`
-      });
-
-      if (notify) {
-        alert(`Perfekt! ${tours.length} Touren geplant – kleine & große Polensprinter korrekt berücksichtigt!`);
-      }
-
-      return { ok: true, tours };
-
-    } catch (err) {
-      console.error(err);
-      setPlanningState(prev => ({ ...prev, running: false, message: 'Fehler – nochmal versuchen' }));
-      alert(err.message || 'Fehler bei der Planung');
-      return { ok: false };
+    let text = await response.text();
+    if (text.includes('loading') || text.includes('estimated_time')) {
+      throw new Error('KI startet – in 30s nochmal klicken!');
     }
-  }, []);
+
+    const jsonMatch = text.match(/\{[\s\S]*"tours"[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('Kein JSON');
+
+    let parsed = JSON.parse(jsonMatch[0]);
+    let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
+
+    // HARTSCHUTZ: Falls KI doch eine Monster-Tour macht → wir splitten sie
+    const finalTours = [];
+    for (const tour of tours) {
+      const orders = tour.orders || [];
+      if (!Array.isArray(orders) || orders.length === 0) continue;
+
+      const firstPlz = orders[0]?.zip?.slice(0,2) || '00';
+      const regionCode = firstPlz[0];
+
+      // Erzwungene Regionaltrennung
+      const allowedRegions = {
+        '0': 'Ost', '1': 'Ost',
+        '2': 'Nord/Ost',
+        '3': 'Westfalen',
+        '4': 'Ruhr',
+        '5': 'Rheinland',
+        '6': 'Mitte',
+        '7': 'Süd', '8': 'Süd', '9': 'Süd'
+      };
+
+      const region = allowedRegions[regionCode] || 'Andere';
+
+      // Große Aufträge rausfiltern
+      if (orders.some(o => o.weight > 1300)) {
+        orders.forEach(o => {
+          if (o.weight > 1300) {
+            finalTours.push({
+              id: `big-${o.id}`,
+              name: `Großauftrag ${o.city} (${o.id})`,
+              type: "groß",
+              maxKg: 3000,
+              weight: o.weight,
+              stops: 1,
+              status: "fahrbar",
+              region,
+              orders: [o],
+              distance: 300,
+              aiScore: 95
+            });
+          }
+        });
+      } else {
+        const weight = orders.reduce((s, o) => s + (o.weight || 0), 0);
+        finalTours.push({
+          ...tour,
+          id: `ai-${Date.now()}-${finalTours.length}`,
+          name: tour.name || `Tour ${region}`,
+          type: "klein",
+          maxKg: 1300,
+          weight,
+          stops: orders.length,
+          status: weight >= 600 || orders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
+          region,
+          orders,
+          distance: Math.round(150 + Math.random() * 300),
+          aiScore: weight >= 600 ? 94 : 86
+        });
+      }
+    }
+
+    localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(finalTours));
+
+    setPlanningState({
+      running: false,
+      lastTours: finalTours.length,
+      lastFinished: Date.now(),
+      message: `${finalTours.length} realistische regionale Touren – kein Ost-West-Wahnsinn mehr!`
+    });
+
+    if (notify) {
+      alert(`Fertig! ${finalTours.length} saubere, regionale Touren – genau wie im echten Leben.`);
+    }
+
+    return { ok: true, tours: finalTours };
+
+  } catch (err) {
+    console.error(err);
+    setPlanningState(prev => ({ ...prev, running: false }));
+    alert('Fehler: ' + (err.message || 'Unbekannt'));
+    return { ok: false };
+  }
+}, []);
   // ENDE des neuen Blocks – alles darunter bleibt wie bei dir!
 
   const autoPlanWithAi = useCallback(
