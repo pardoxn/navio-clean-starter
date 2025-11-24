@@ -309,14 +309,18 @@ Beispiel:
   {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-           const response = await fetch(`${OPT_URL || 'https://navio-backend.onrender.com'}/optimize`, {
+           const response = await fetch('https://navio-backend.onrender.com/plan', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    depot,
-    maxWeightKg: 1300,
-    orders: list
-  }),
+    inputs: prompt,
+    parameters: {
+      max_new_tokens: 2200,
+      temperature: 0.5,
+      top_p: 0.9,
+      do_sample: true
+    }
+  })
 });
 
     let text = await response.text();  // ← DAS FEHLTETE!
