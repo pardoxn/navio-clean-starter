@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Package,
   Truck,
@@ -23,11 +23,29 @@ import {
   Trash2,
   ListFilter,
   Calendar,
+  Sparkles,
+  Loader2,
 } from 'lucide-react'
 
-// Vite-Env (für später, wenn echte API-Funktionen dazukommen)
+
+
+
+// Vite-Env
 const API_URL = import.meta.env.VITE_API_URL || ''
 const OPT_URL = import.meta.env.VITE_OPTIMIZER_URL || ''
+
+// Depot / Logik-Konstanten
+const DEPOT = {
+  name: 'Depot Bad Wünnenberg',
+  street: 'Ostring 3',
+  zip: '33181',
+  city: 'Bad Wünnenberg',
+}
+const DEPOT_ZIP = DEPOT.zip
+const MAX_TOUR_KG = 1200
+
+const STORAGE_KEY_ORDERS = 'navio-orders'
+const STORAGE_KEY_TOURS = 'navio-tours'
 
 export default function NavioApp() {
   const [active, setActive] = useState('orders') // 'orders' | 'tours' | 'analytics'
@@ -191,11 +209,193 @@ function OrdersView() {
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [history, setHistory] = useState([])
+  const [planningState, setPlanningState] = useState({
+    running: false,
+    lastTrigger: null,
+    lastTours: 0,
+    lastFinished: null,
+    lastError: null,
+    message: 'NavioAI bereit',
+    queued: null,
+    lastMeta: null,
+  })
 
-  const tableOrders = useMemo(() => orders, [orders])
+  const ordersRef = useRef(orders)
+  useEffect(() => {
+    ordersRef.current = orders
+  }, [orders])
+
+  const plannerRunningRef = useRef(planningState.running)
+  useEffect(() => {
+    plannerRunningRef.current = planningState.running
+  }, [planningState.running])
+
+  const queuedPlanRef = useRef(null)
+
+  // ------------------- Persistenz: Bestellungen -------------------
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_ORDERS)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.length) {
+        setOrders(parsed)
+      }
+    } catch (err) {
+      console.warn('Konnte gespeicherte Orders nicht laden', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(orders))
+    } catch (err) {
+      console.warn('Konnte Orders nicht speichern', err)
+    }
+  }, [orders])
+
+  const planToursWithAi = useCallback(async (options = {}) => {
+  const {
+    dataset,
+    trigger = 'manual',
+    meta = {},
+    notify = trigger === 'manual',
+  } = options;
+
+  const list = Array.isArray(dataset) ? dataset : ordersRef.current;
+  if (!Array.isArray(list) || list.length === 0) {
+    const msg = 'Keine Bestellungen vorhanden.';
+    setPlanningState((prev) => ({
+      ...prev,
+      lastError: msg,
+      running: false,
+      message: msg,
+    }));
+    if (notify) alert(msg);
+    return { ok: false, reason: 'no_orders' };
+  }
+
+  const payload = {
+    depot: DEPOT,
+    maxWeightKg: MAX_TOUR_KG,
+    orders: list,
+    meta: {
+      trigger,
+      ...meta,
+    },
+  };
+
+  setPlanningState((prev) => ({
+    ...prev,
+    running: true,
+    lastError: null,
+    queued: null,
+    lastTrigger: trigger,
+    message:
+      trigger === 'import'
+        ? 'NavioAI plant automatisch neue Touren …'
+        : 'NavioAI plant Touren …',
+  }));
+
+  try {
+    const res = await fetch('/api/plan', {  // ← Hier geändert: Internal API
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const tours = Array.isArray(data.tours) ? data.tours : [];
+
+    try {
+      localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours));
+    } catch (err) {
+      console.warn('Konnte Touren nicht speichern', err);
+    }
+
+    const finishedAt = Date.now();
+
+    setPlanningState({
+      running: false,
+      lastTrigger: trigger,
+      lastTours: tours.length,
+      lastFinished: finishedAt,
+      lastError: null,
+      message:
+        trigger === 'import'
+          ? `Automatisch ${tours.length} Touren geplant`
+          : `Zuletzt ${tours.length} Touren geplant`,
+      queued: null,
+      lastMeta: data.meta || null,
+    });
+
+    if (notify) {
+      alert(`NavioAI hat ${tours.length} Tour(en) geplant. Schau im "Touren"-Tab nach.`);
+    }
+
+    return { ok: true, tours };
+  } catch (err) {
+    const errorMessage = err?.message || 'Unbekannter Fehler';
+    setPlanningState((prev) => ({
+      ...prev,
+      running: false,
+      lastError: errorMessage,
+      message: 'Fehler bei der Tourenplanung',
+    }));
+    if (notify) {
+      alert('Fehler bei der Tourenplanung: ' + errorMessage);
+    }
+    return { ok: false, error: err };
+  }
+}, []);
+
+  const autoPlanWithAi = useCallback(
+    (dataset, batch) => {
+      if (!Array.isArray(dataset) || dataset.length === 0) return
+      const meta = {
+        batchId: batch?.id,
+        importedRows: batch?.rows?.length || dataset.length,
+      }
+
+      if (plannerRunningRef.current) {
+        queuedPlanRef.current = {
+          dataset,
+          trigger: 'import',
+          meta,
+          notify: false,
+        }
+        setPlanningState((prev) => ({
+          ...prev,
+          queued: {
+            trigger: 'import',
+            rows: meta.importedRows,
+            batchId: meta.batchId,
+          },
+        }))
+        return
+      }
+
+      planToursWithAi({ dataset, trigger: 'import', meta, notify: false })
+    },
+    [planToursWithAi]
+  )
+
+  useEffect(() => {
+    if (!planningState.running && queuedPlanRef.current) {
+      const job = queuedPlanRef.current
+      queuedPlanRef.current = null
+      planToursWithAi(job)
+    }
+  }, [planningState.running, planToursWithAi])
+
+  // ------------------- CRUD + Auswahl -------------------
 
   function handleCreate(newOrder) {
-    // interne ID falls keine Belegnummer gesetzt
     const id =
       newOrder.id && newOrder.id.trim().length
         ? newOrder.id.trim()
@@ -208,7 +408,10 @@ function OrdersView() {
       zip: newOrder.zip?.trim() || '',
       city: newOrder.city?.trim() || '',
       deliveryDate: newOrder.deliveryDate?.trim() || '',
-      weight: typeof newOrder.weight === 'number' ? newOrder.weight : Number(newOrder.weight) || 0,
+      weight:
+        typeof newOrder.weight === 'number'
+          ? newOrder.weight
+          : Number(newOrder.weight) || 0,
     }
 
     setOrders((prev) => [entry, ...prev])
@@ -235,7 +438,7 @@ function OrdersView() {
   }
 
   function selectAllVisible() {
-    const allIds = tableOrders.map((o) => o.id)
+    const allIds = orders.map((o) => o.id)
     const allSelected = allIds.every((id) => selected.has(id))
     setSelected((prev) => {
       const next = new Set(prev)
@@ -245,15 +448,26 @@ function OrdersView() {
     })
   }
 
+  // ------------------- CSV Import -------------------
+
   function onImportBatch(batch) {
-    setOrders((prev) => [
-      ...batch.rows.map((r) => ({ ...r, batchId: batch.id, imported: true })),
-      ...prev,
-    ])
+    if (!batch || !Array.isArray(batch.rows)) return
+    const mappedRows = batch.rows.map((r) => ({ ...r, batchId: batch.id, imported: true }))
+
+    let nextOrdersSnapshot = ordersRef.current
+    setOrders((prev) => {
+      const updated = [...mappedRows, ...prev]
+      nextOrdersSnapshot = updated
+      return updated
+    })
     setHistory((prev) => [
-      { id: batch.id, when: 'gerade eben', rows: batch.rows.length, ok: true },
+      { id: batch.id, when: 'gerade eben', rows: mappedRows.length, ok: true },
       ...prev,
     ])
+
+    if (mappedRows.length > 0) {
+      autoPlanWithAi(nextOrdersSnapshot, { ...batch, rows: mappedRows })
+    }
   }
 
   function deleteBatch(batchId) {
@@ -265,6 +479,18 @@ function OrdersView() {
     })
   }
 
+  // ------------------- Backend-KI: Touren planen -------------------
+
+  function handlePlanTours() {
+    if (planningState.running) {
+      alert('NavioAI plant bereits Touren. Bitte einen Moment warten …')
+      return
+    }
+    planToursWithAi({ trigger: 'manual', notify: true })
+  }
+
+  const tableOrders = useMemo(() => orders, [orders])
+
   return (
     <div className="space-y-8">
       {/* Toolbar */}
@@ -272,23 +498,27 @@ function OrdersView() {
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <ListFilter className="h-4 w-4" /> CSV importieren oder Bestellungen manuell hinzufügen
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowAdd(true)}
-            className="inline-flex items-center gap-2 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
-          >
-            <Plus className="h-4 w-4" /> Bestellung hinzufügen
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100"
-          >
-            <Truck className="h-4 w-4" />
-            Touren planen
-            <span className="ml-1 rounded-full bg-white/80 px-2 py-[1px] text-[10px] font-semibold text-indigo-600">
-              NavioAI
-            </span>
-          </button>
+        <div className="flex flex-col items-end gap-2 text-right">
+          <AiPlannerStatus state={planningState} />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAdd(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-100"
+            >
+              <Plus className="h-4 w-4" /> Bestellung hinzufügen
+            </button>
+            <button
+              type="button"
+              onClick={handlePlanTours}
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100"
+            >
+              <Truck className="h-4 w-4" />
+              Touren planen
+              <span className="ml-1 rounded-full bg-white/80 px-2 py-[1px] text-[10px] font-semibold text-indigo-600">
+                NavioAI
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -322,6 +552,78 @@ function OrdersView() {
       />
     </div>
   )
+}
+
+function AiPlannerStatus({ state }) {
+  const {
+    running,
+    lastError,
+    message,
+    lastTours,
+    lastFinished,
+    queued,
+    lastMeta,
+  } = state || {}
+
+  let text = message || 'NavioAI bereit'
+  let detail = ''
+  let wrapperClass = 'border-slate-200 bg-white/80 text-slate-600'
+  let Icon = Sparkles
+  let iconClass = 'text-indigo-500'
+
+  if (running) {
+    text = 'NavioAI plant neue Touren …'
+    detail = queued
+      ? `Import mit ${queued.rows} Zeilen wird danach übernommen`
+      : 'Optimierung läuft'
+    wrapperClass = 'border-indigo-200 bg-indigo-50 text-indigo-700'
+    Icon = Loader2
+    iconClass = 'text-indigo-600 animate-spin'
+  } else if (lastError) {
+    text = 'Planung fehlgeschlagen'
+    detail = lastError
+    wrapperClass = 'border-rose-200 bg-rose-50 text-rose-700'
+    Icon = X
+    iconClass = 'text-rose-600'
+  } else if (lastFinished) {
+    const relative = formatRelativeTime(lastFinished)
+    const strategy = describeStrategy(lastMeta)
+    detail = `Zuletzt ${lastTours} Touren · ${relative}${strategy ? ` · ${strategy}` : ''}`
+    wrapperClass = 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    Icon = Sparkles
+    iconClass = 'text-emerald-600'
+  } else if (queued) {
+    detail = `Import mit ${queued.rows} Zeilen vorgemerkt`
+  }
+
+  return (
+    <div
+      className={`inline-flex max-w-xs items-center gap-2 rounded-2xl border px-3 py-1.5 text-xs ${wrapperClass}`}
+    >
+      <Icon className={`h-3.5 w-3.5 ${iconClass}`} />
+      <div className="text-right leading-tight">
+        <div className="font-semibold">{text}</div>
+        {detail && <div className="text-[10px]">{detail}</div>}
+      </div>
+    </div>
+  )
+}
+
+function formatRelativeTime(timestamp) {
+  if (!timestamp) return ''
+  const diff = Date.now() - timestamp
+  if (diff < 60 * 1000) return 'gerade eben'
+  if (diff < 60 * 60 * 1000) return `vor ${Math.floor(diff / (60 * 1000))} min`
+  if (diff < 24 * 60 * 60 * 1000) return `vor ${Math.floor(diff / (60 * 60 * 1000))} h`
+  const date = new Date(timestamp)
+  return date.toLocaleDateString('de-DE')
+}
+
+function describeStrategy(meta) {
+  if (!meta?.strategy) return ''
+  if (meta.strategy.includes('region')) return 'Region + Termin'
+  if (meta.strategy.includes('zip')) return 'PLZ Cluster'
+  return meta.strategy
 }
 
 function OrdersTable({ orders, selected, onToggle, onToggleAll }) {
@@ -603,6 +905,10 @@ function CsvImportCard({ onImport }) {
           Demo: Import legt Datensätze in die Tabelle unten
         </span>
       </div>
+      <div className="mt-3 inline-flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-xs font-medium text-indigo-700">
+        <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+        Nach dem Import plant NavioAI automatisch geografisch & logisch.
+      </div>
     </Card>
   )
 }
@@ -778,60 +1084,129 @@ function splitLine(line, d) {
 /* -------------------------------------------------------------------------- */
 
 function ToursView() {
-  const tours = [
-    {
-      name: 'Tour Stuttgart',
-      region: 'Baden-Württemberg',
-      stops: 5,
-      distance: 450,
-      weight: 1250,
-    },
-    {
-      name: 'Tour München',
-      region: 'Bayern',
-      stops: 4,
-      distance: 520,
-      weight: 1100,
-    },
-  ]
+  const [tours, setTours] = useState([])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_TOURS)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        setTours(parsed)
+      }
+    } catch (err) {
+      console.warn('Konnte gespeicherte Touren nicht laden', err)
+    }
+  }, [])
+
+  if (!tours.length) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center rounded-3xl border border-slate-200/80 bg-white/90 p-6 text-center text-slate-500 shadow-[0_10px_30px_rgba(2,6,23,0.06)]">
+        <div>
+          <Truck className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+          <div className="text-sm font-medium text-slate-700">Noch keine Touren geplant</div>
+          <div className="text-xs text-slate-500">
+            Importiere Bestellungen und klicke im Tab &quot;Bestellungen&quot; auf &quot;Touren planen&quot;.
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      {tours.map((t) => (
-        <div
-          key={t.name}
-          className="rounded-3xl border border-slate-200/80 bg-white/90 p-7 shadow-[0_8px_30px_rgba(2,6,23,0.05)] backdrop-blur-xl transition hover:shadow-[0_12px_40px_rgba(2,6,23,0.08)]"
-        >
-          <div className="mb-6 flex items-start justify-between">
-            <div>
-              <h3 className="text-2xl font-light text-slate-900">{t.name}</h3>
-              <div className="mt-1 inline-flex items-center gap-2 text-slate-600">
-                <MapPin className="h-4 w-4" />
-                {t.region}
+      {tours.map((t) => {
+        const totalWeight = t.weight ?? (Array.isArray(t.orders)
+          ? t.orders.reduce((sum, o) => sum + (Number(o.weight) || 0), 0)
+          : 0)
+        const stops = t.stops ?? (Array.isArray(t.orders) ? t.orders.length : 0)
+        const distance =
+          typeof t.distance === 'number'
+            ? t.distance
+            : t?.meta?.estimatedDistance ?? null
+        const deliveryWindow =
+          t.deliveryWindow ||
+          t?.meta?.deliveryWindow ||
+          (t?.meta?.slot === 'flex' ? 'Flexible Lieferung' : t?.meta?.slot)
+        const aiScore = t.aiScore ?? t?.meta?.aiScore ?? null
+
+        return (
+          <div
+            key={t.id || t.name}
+            className="rounded-3xl border border-slate-200/80 bg-white/90 p-7 shadow-[0_8px_30px_rgba(2,6,23,0.05)] backdrop-blur-xl transition hover:shadow-[0_12px_40px_rgba(2,6,23,0.08)]"
+          >
+            <div className="mb-6 flex items-start justify-between">
+              <div>
+                <h3 className="text-2xl font-light text-slate-900">
+                  {t.name || `Tour ${t.id}`}
+                </h3>
+                <div className="mt-1 inline-flex items-center gap-2 text-slate-600">
+                  <MapPin className="h-4 w-4" />
+                  {t.region || DEPOT.city}
+                </div>
+                {deliveryWindow && (
+                  <div className="text-xs text-slate-500">Lieferfenster: {deliveryWindow}</div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
+                  Aktiv
+                </span>
+                {t.lineIndex && (
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">
+                    Linie {t.lineIndex}
+                  </span>
+                )}
+                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-semibold text-indigo-700">
+                  NavioAI
+                </span>
               </div>
             </div>
-            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs text-emerald-700">
-              Aktiv
-            </span>
+            <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+              <Metric label="Stops" value={stops} />
+              <Metric
+                label="Distanz"
+                value={distance != null ? `${distance} km` : '–'}
+              />
+              <Metric
+                label="Fracht"
+                value={`${totalWeight.toLocaleString('de-DE', {
+                  maximumFractionDigits: 1,
+                })} kg`}
+              />
+              <Metric label="NavioAI" value={aiScore != null ? `${aiScore}/100` : '–'} />
+            </div>
+            <div className="flex gap-3">
+              <button className="flex-1 rounded-xl border border-slate-200/80 bg-white/90 px-4 py-3 text-sm font-medium text-slate-800 transition hover:bg-white">
+                Details
+              </button>
+              <button
+                className="flex-1 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-700 transition hover:bg-sky-100"
+                onClick={() => {
+                  const start = `${DEPOT.street}, ${DEPOT.zip} ${DEPOT.city}`
+                  const zips = (Array.isArray(t.orders) ? t.orders : [])
+                    .map((o) => o.zip)
+                    .filter(Boolean)
+                    .map((zip) => encodeURIComponent(String(zip)))
+
+                  let url = `https://www.google.com/maps/dir/${encodeURIComponent(start)}`
+                  if (zips.length > 0) {
+                    url += '/' + zips.join('/')
+                  }
+
+                  window.open(url, '_blank')
+                }}
+              >
+                Navigation
+              </button>
+            </div>
           </div>
-          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <Metric label="Stops" value={t.stops} />
-            <Metric label="Distanz" value={`${t.distance} km`} />
-            <Metric label="Fracht" value={`${t.weight} kg`} />
-          </div>
-          <div className="flex gap-3">
-            <button className="flex-1 rounded-xl border border-slate-200/80 bg-white/90 px-4 py-3 text-sm font-medium text-slate-800 transition hover:bg-white">
-              Details
-            </button>
-            <button className="flex-1 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-700 transition hover:bg-sky-100">
-              Navigation
-            </button>
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
+
 
 function AnalyticsView() {
   return (
