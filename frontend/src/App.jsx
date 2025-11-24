@@ -309,7 +309,7 @@ Beispiel:
   {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-       const response = await fetch(
+           const response = await fetch(
       'https://proxy.cors.sh/https://api-inference.huggingface.co/models/google/gemma-2b-it',
       {
         method: 'POST',
@@ -330,7 +330,7 @@ Beispiel:
       }
     );
 
-    let text = await response.text();
+    let text = await response.text();  // ← DAS FEHLTETE!
 
     if (text.includes('loading') || text.includes('estimated_time')) {
       throw new Error('KI-Modell startet gerade – in 30 Sekunden nochmal klicken!');
@@ -348,7 +348,7 @@ Beispiel:
 
     let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
 
-    // === HARTSCHUTZ + FINAL LOGIK ===
+    // HARTSCHUTZ + FINAL LOGIK
     const finalTours = [];
 
     for (const tour of tours) {
@@ -397,7 +397,7 @@ Beispiel:
           status: weight >= 600 || smallOrders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
           region,
           orders: smallOrders,
-          distance: Math.round(200 + Math.random() * 250),
+          distance: Math.round(150 + Math.random() * 300),
           aiScore: weight >= 600 ? 94 : 87
         });
       }
