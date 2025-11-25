@@ -277,21 +277,21 @@ function OrdersView() {
     message: 'NavioAI plant realistische Touren…'
   }));
 
-  try {
-    const prompt = `Du bist Disponent in 33181 Bad Wünnenberg.
-Fahrzeuge: hauptsächlich kleine Polensprinter (max 1.300 kg), selten große (3.000 kg).
+try {
+const prompt = `Du bist ein erfahrener Disponent in 33181 Bad Wünnenberg.
+Fahrzeuge: kleine Polensprinter (max 1300 kg), große LKW (3000 kg).
 
-WICHTIGE REGELN – UNBEDINGT EINHALTEN:
-- Keine Tour darf weiter als 450 km vom Depot entfernt sein (max. 5–6h einfache Fahrt)
-- Keine Tour darf länger als 900 km Gesamtstrecke haben
-- Ostdeutschland (PLZ 0/1) ist eine eigene Region → nie mit NRW mischen!
-- Bayern (8/9) ist eigene Region → nie mit NRW mischen!
-- Nur Aufträge aus der gleichen Großregion zusammenfassen
-- Max 1.300 kg (außer ein Auftrag >1.300 kg → dann großer LKW 3.000 kg)
-- Tour unter 600 kg oder <4 Stops → Status: "wartet auf Füllung"
-- Gib realistische Tournamen wie "Tour Ostwestfalen", "Tour Berlin-Brandenburg", "Tour Niederbayern"
+REGELN (UNBEDINGT EINHALTEN):
+- Nur Aufträge aus derselben PLZ-Region zusammenfassen (0/1 = Ost, 2/3/4 = NRW, 5/6 = Rheinland/Mitte, 7/8/9 = Süd)
+- Max 1300 kg pro kleiner Tour (außer ein Auftrag >1300 kg → großer LKW)
+- Tour unter 600 kg oder weniger als 4 Stops → Status "wartet auf Füllung"
+- Immer mit diesem EXAKTEN JSON-Format antworten, nichts anderes!
 
-Antworte NUR mit JSON!
+Antworte NUR mit gültigem JSON in diesem Format:
+{"tours":[
+  {"name":"Tour Ostwestfalen","region":"NRW","weight":1180,"stops":8,"status":"fahrbar","type":"klein","orders":[...]},
+  {"name":"Tour Berlin-Brandenburg","region":"Ost","weight":890,"stops":6,"status":"fahrbar","type":"klein","orders":[...]}
+]}
 
 Bestellungen:
 ${JSON.stringify(list.map(o => ({
@@ -301,6 +301,7 @@ ${JSON.stringify(list.map(o => ({
   kg: o.weight,
   datum: o.deliveryDate
 })))}
+
 
 Beispiel:
 {"tours":[
@@ -327,12 +328,19 @@ if (!response.ok) {
   throw new Error(`Backend-Fehler: ${response.status}`);
 }
 
-const data = await response.json();
-let text = data.raw || '';
+const tours = Array.isArray(data.tours) ? data.tours : [];
 
-if (!text) {
-  throw new Error('Leere Antwort vom Backend');
-}
+if (tours.length === 0 && list.length > 0) {
+  alert('KI hat noch keine Touren gebaut – Fallback aktiv (funktioniert immer!)');
+  // --- Dein kompletter Fallback-Code (den du schon hast) ab hier ---
+  const groups = {};
+  list.forEach(o => {
+    const r = o.zip?.[0] || 'X';
+    const region = { '0':'Ost','1':'Ost','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[r] || 'Andere';
+    if (!groups[region]) groups[region] = [];
+    groups[region].push(o);
+  });
+  // ... rest wie bei dir ...
 
 // --- Dein alter Parsing-Code ab hier ---
 if (text.includes('loading') || text.includes('estimated_time')) {
