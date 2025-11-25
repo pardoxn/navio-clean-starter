@@ -257,33 +257,33 @@ function OrdersView() {
 
       // NEUER KI-PLANNER – ab hier ersetzen!
     const planToursWithAi = useCallback(async (options = {}) => {
-    const { dataset, trigger = 'manual', notify = true } = options
-    const list = Array.isArray(dataset) ? dataset : ordersRef.current
+  const { dataset, trigger = 'manual', notify = true } = options
+  const list = Array.isArray(dataset) ? dataset : ordersRef.current
 
-    if (!list || list.length === 0) {
-      alert('Keine Bestellungen vorhanden')
-      return { ok: false }
-    }
+  if (!list || list.length === 0) {
+    alert('Keine Bestellungen vorhanden')
+    return { ok: false }
+  }
 
-    setPlanningState(prev => ({
-      ...prev,
-      running: true,
-      message: 'NavioAI plant Touren…'
-    }))
+  setPlanningState(prev => ({
+    ...prev,
+    running: true,
+    message: 'NavioAI plant intelligente Touren…'
+  }))
 
-    try {
-      const prompt = `Du bist ein erfahrener Disponent in 33181 Bad Wünnenberg.
+  try {
+    const prompt = `Du bist ein erfahrener Disponent in 33181 Bad Wünnenberg.
 Fahrzeuge: kleine Polensprinter (max 1300 kg), große LKW (3000 kg).
 
 REGELN (UNBEDINGT EINHALTEN):
-- Nur Aufträge aus derselben PLZ-Region zusammenfassen (0/1 = Ost, 2/3/4 = NRW, 5/6 = Rheinland/Mitte, 7/8/9 = Süd)
-- Max 1300 kg pro kleiner Tour (außer ein Auftrag >1300 kg → großer LKW)
-- Tour unter 600 kg oder weniger als 4 Stops → Status "wartet auf Füllung"
-- Antworte NUR mit gültigem JSON in genau diesem Format:
+- Nur Aufträge aus derselben Region zusammenfassen (0/1 = Ost, 2/3/4 = NRW, 5/6 = Rheinland/Mitte, 7/8/9 = Süd)
+- Max 1300 kg pro kleiner Tour (einzelne Aufträge >1300 kg → großer LKW)
+- Tour unter 600 kg ODER weniger als 4 Stops → Status "wartet auf Füllung"
+- Immer NUR mit diesem exakten JSON antworten, nichts anderes!
 
 {"tours":[
   {"name":"Tour Ostwestfalen","region":"NRW","weight":1180,"stops":8,"status":"fahrbar","type":"klein","orders":[...]},
-  {"name":"Tour Berlin-Brandenburg","region":"Ost","weight":890,"stops":6,"status":"fahrbar","type":"klein","orders":[...]}
+  {"name":"Tour Hamburg-Bremen","region":"Nord","weight":890,"stops":6,"status":"fahrbar","type":"klein","orders":[...]}
 ]}
 
 Bestellungen:
@@ -297,82 +297,60 @@ ${JSON.stringify(list.map(o => ({
 
 Plane jetzt!`;
 
-      const response = await fetch('https://navio-backend-1.onrender.com/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            max_new_tokens: 2200,
-            temperature: 0.5,
-            top_p: 0.9,
-            do_sample: true
-          }
-        })
+    const response = await fetch('https://navio-backend-1.onrender.com/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: 2400,
+          temperature: 0.3,
+          top_p: 0.95,
+          do_sample: true
+        }
       })
+    })
 
-      if (!response.ok) {
-        throw new Error(`Backend-Fehler: ${response.status}`)
-      }
-
-      const data = await response.json()
-
-      // Backend schickt jetzt direkt { tours: [...] }
-      let tours = Array.isArray(data.tours) ? data.tours : []
-
-      // Falls KI nichts liefert → robuster Fallback
-      if (tours.length === 0 && list.length > 0) {
-        alert('KI hat noch keine Touren gebaut – Fallback aktiv (funktioniert immer!)')
-
-        const groups = {}
-        list.forEach(o => {
-          const r = o.zip?.[0] || 'X'
-          const region = { '0':'Ost','1':'Ost','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[r] || 'Andere'
-          if (!groups[region]) groups[region] = []
-          groups[region].push(o)
-        })
-
-        tours = Object.entries(groups).map(([region, ords]) => {
-          const w = ords.reduce((s,o) => s + o.weight, 0)
-          return {
-            id: `fb-${Date.now()}-${region}`,
-            name: `Tour ${region}`,
-            type: w > 1300 ? "groß" : "klein",
-            maxKg: w > 1300 ? 3000 : 1300,
-            weight: w,
-            stops: ords.length,
-            status: w >= 600 || ords.length >= 4 ? "fahrbar" : "wartet auf Füllung",
-            region,
-            orders: ords,
-            distance: 300,
-            aiScore: 90
-          }
-        })
-      }
-
-      // Speichern & UI updaten
-      localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours))
-
-      setPlanningState({
-        running: false,
-        lastTours: tours.length,
-        lastFinished: Date.now(),
-        message: `${tours.length} Touren erstellt – NavioAI lebt!`
-      })
-
-      if (notify) {
-        alert(`BOOM! ${tours.length} perfekte Touren sind da!`)
-      }
-
-      return { ok: true, tours }
-
-    } catch (err) {
-      console.error('NavioAI Fehler:', err)
-      setPlanningState(prev => ({ ...prev, running: false, message: 'Fehler' }))
-      alert(err.message || 'KI-Fehler – nochmal versuchen')
-      return { ok: false }
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(err.includes('loading') ? 'KI startet gerade… nochmal klicken!' : 'Backend-Fehler')
     }
-  }, [])
+
+    const data = await response.json()
+    const tours = Array.isArray(data.tours) && data.tours.length > 0 ? data.tours : null
+
+    if (!tours) {
+      throw new Error('KI hat keine Touren geliefert – nochmal versuchen')
+    }
+
+    localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours))
+
+    setPlanningState({
+      running: false,
+      lastTours: tours.length,
+      lastFinished: Date.now(),
+      message: `${tours.length} intelligente Touren – NavioAI rockt!`
+    })
+
+    if (notify) {
+      alert(`BOOM! ${tours.length} echt gute Touren sind da!`)
+    }
+
+    return { ok: true, tours }
+
+  } catch (err) {
+    console.error('NavioAI Fehler:', err)
+    setPlanningState(prev => ({
+      ...prev,
+      running: false,
+      message: err.message.includes('startet') ? 'KI startet gerade…' : 'KI momentan nicht erreichbar'
+    }))
+    alert(err.message.includes('startet') 
+      ? 'KI wird gerade geweckt – in 20-30 Sekunden nochmal klicken!' 
+      : 'KI antwortet gerade nicht – in 2 Minuten nochmal versuchen')
+    return { ok: false }
+  }
+}, [])
   // ENDE des neuen Blocks – alles darunter bleibt wie bei dir!
 
   const autoPlanWithAi = useCallback(
