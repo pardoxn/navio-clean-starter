@@ -297,7 +297,7 @@ ${JSON.stringify(list.map(o => ({
 
 Plane jetzt!`;
 
-    const response = await fetch('https://navio-backend-1.onrender.com/plan', {
+    const response = await fetch('https://benedikt78-navio-ai.huggingface.space/plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
