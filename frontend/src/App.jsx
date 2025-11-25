@@ -256,38 +256,31 @@ function OrdersView() {
   }, [orders])
 
       // NEUER KI-PLANNER – ab hier ersetzen!
-  const planToursWithAi = useCallback(async (options = {}) => {
-  const { dataset, trigger = 'manual', notify = true } = options;
-  const list = Array.isArray(dataset) ? dataset : ordersRef.current;
+    const planToursWithAi = useCallback(async (options = {}) => {
+    const { dataset, trigger = 'manual', notify = true } = options
+    const list = Array.isArray(dataset) ? dataset : ordersRef.current
 
-  if (!list || list.length === 0) {
-    alert('Keine Bestellungen vorhanden');
-    return { ok: false };
-  }
+    if (!list || list.length === 0) {
+      alert('Keine Bestellungen vorhanden')
+      return { ok: false }
+    }
 
-  const hfToken = import.meta.env.VITE_HF_TOKEN;
-  if (!hfToken) {
-    alert('VITE_HF_TOKEN fehlt!');
-    return { ok: false };
-  }
+    setPlanningState(prev => ({
+      ...prev,
+      running: true,
+      message: 'NavioAI plant Touren…'
+    }))
 
-  setPlanningState(prev => ({
-    ...prev,
-    running: true,
-    message: 'NavioAI plant realistische Touren…'
-  }));
-
-try {
-const prompt = `Du bist ein erfahrener Disponent in 33181 Bad Wünnenberg.
+    try {
+      const prompt = `Du bist ein erfahrener Disponent in 33181 Bad Wünnenberg.
 Fahrzeuge: kleine Polensprinter (max 1300 kg), große LKW (3000 kg).
 
 REGELN (UNBEDINGT EINHALTEN):
 - Nur Aufträge aus derselben PLZ-Region zusammenfassen (0/1 = Ost, 2/3/4 = NRW, 5/6 = Rheinland/Mitte, 7/8/9 = Süd)
 - Max 1300 kg pro kleiner Tour (außer ein Auftrag >1300 kg → großer LKW)
 - Tour unter 600 kg oder weniger als 4 Stops → Status "wartet auf Füllung"
-- Immer mit diesem EXAKTEN JSON-Format antworten, nichts anderes!
+- Antworte NUR mit gültigem JSON in genau diesem Format:
 
-Antworte NUR mit gültigem JSON in diesem Format:
 {"tours":[
   {"name":"Tour Ostwestfalen","region":"NRW","weight":1180,"stops":8,"status":"fahrbar","type":"klein","orders":[...]},
   {"name":"Tour Berlin-Brandenburg","region":"Ost","weight":890,"stops":6,"status":"fahrbar","type":"klein","orders":[...]}
@@ -302,159 +295,84 @@ ${JSON.stringify(list.map(o => ({
   datum: o.deliveryDate
 })))}
 
+Plane jetzt!`;
 
-Beispiel:
-{"tours":[
-  {"name":"Tour Ostwestfalen","region":"OWL","weight":1180,"stops":9,"status":"fahrbar","type":"klein","maxKg":1300,"orders":[...]},
-  {"name":"Tour Berlin-Brandenburg","region":"Ost","weight":890,"stops":6,"status":"fahrbar","type":"klein","maxKg":1300,"orders":[...]},
-  {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
-]}`;
+      const response = await fetch('https://navio-backend-1.onrender.com/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputs: prompt,
+          parameters: {
+            max_new_tokens: 2200,
+            temperature: 0.5,
+            top_p: 0.9,
+            do_sample: true
+          }
+        })
+      })
 
-           const response = await fetch('https://navio-backend-1.onrender.com/plan', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    inputs: prompt,
-    parameters: {
-      max_new_tokens: 2200,
-      temperature: 0.5,
-      top_p: 0.9,
-      do_sample: true
-    }
-  })
-});
-
-if (!response.ok) {
-  throw new Error(`Backend-Fehler: ${response.status}`);
-}
-
-const tours = Array.isArray(data.tours) ? data.tours : [];
-
-if (tours.length === 0 && list.length > 0) {
-  alert('KI hat noch keine Touren gebaut – Fallback aktiv (funktioniert immer!)');
-  // --- Dein kompletter Fallback-Code (den du schon hast) ab hier ---
-  const groups = {};
-  list.forEach(o => {
-    const r = o.zip?.[0] || 'X';
-    const region = { '0':'Ost','1':'Ost','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[r] || 'Andere';
-    if (!groups[region]) groups[region] = [];
-    groups[region].push(o);
-  });
-  // ... rest wie bei dir ...
-
-// --- Dein alter Parsing-Code ab hier ---
-if (text.includes('loading') || text.includes('estimated_time')) {
-  throw new Error('KI startet gerade – in 30s nochmal klicken!');
-}
-
-const jsonMatch = text.match(/\{[\s\S]*\}/);
-if (!jsonMatch) throw new Error('Kein gültiges JSON erhalten');
-
-    // HARTSCHUTZ + FINAL LOGIK
-    const finalTours = [];
-
-    for (const tour of tours) {
-      const orders = tour.orders || [];
-      if (!orders.length) continue;
-
-      const firstZip = orders[0]?.zip?.[0] || 'X';
-      const regionMap = {
-        '0': 'Ost', '1': 'Ost', '2': 'Nord/Ost', '3': 'Westfalen',
-        '4': 'Ruhr', '5': 'Rheinland', '6': 'Mitte',
-        '7': 'Süd', '8': 'Süd', '9': 'Süd'
-      };
-      const region = regionMap[firstZip] || 'Andere';
-
-      // Große Aufträge raus
-      const bigOrders = orders.filter(o => o.weight > 1300);
-      const smallOrders = orders.filter(o => o.weight <= 1300);
-
-      // Große einzeln
-      bigOrders.forEach(o => {
-        finalTours.push({
-          id: `big-${o.id}`,
-          name: `Großauftrag ${o.city} (${o.id})`,
-          type: "groß",
-          maxKg: 3000,
-          weight: o.weight,
-          stops: 1,
-          status: "fahrbar",
-          region,
-          orders: [o],
-          distance: 350,
-          aiScore: 96
-        });
-      });
-
-      // Kleine zusammen
-      if (smallOrders.length > 0) {
-        const weight = smallOrders.reduce((s, o) => s + (o.weight || 0), 0);
-        finalTours.push({
-          id: `ai-${Date.now()}-${finalTours.length}`,
-          name: tour.name || `Tour ${region}`,
-          type: "klein",
-          maxKg: 1300,
-          weight,
-          stops: smallOrders.length,
-          status: weight >= 600 || smallOrders.length >= 4 ? "fahrbar" : "wartet auf Füllung",
-          region,
-          orders: smallOrders,
-          distance: Math.round(150 + Math.random() * 300),
-          aiScore: weight >= 600 ? 94 : 87
-        });
+      if (!response.ok) {
+        throw new Error(`Backend-Fehler: ${response.status}`)
       }
+
+      const data = await response.json()
+
+      // Backend schickt jetzt direkt { tours: [...] }
+      let tours = Array.isArray(data.tours) ? data.tours : []
+
+      // Falls KI nichts liefert → robuster Fallback
+      if (tours.length === 0 && list.length > 0) {
+        alert('KI hat noch keine Touren gebaut – Fallback aktiv (funktioniert immer!)')
+
+        const groups = {}
+        list.forEach(o => {
+          const r = o.zip?.[0] || 'X'
+          const region = { '0':'Ost','1':'Ost','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[r] || 'Andere'
+          if (!groups[region]) groups[region] = []
+          groups[region].push(o)
+        })
+
+        tours = Object.entries(groups).map(([region, ords]) => {
+          const w = ords.reduce((s,o) => s + o.weight, 0)
+          return {
+            id: `fb-${Date.now()}-${region}`,
+            name: `Tour ${region}`,
+            type: w > 1300 ? "groß" : "klein",
+            maxKg: w > 1300 ? 3000 : 1300,
+            weight: w,
+            stops: ords.length,
+            status: w >= 600 || ords.length >= 4 ? "fahrbar" : "wartet auf Füllung",
+            region,
+            orders: ords,
+            distance: 300,
+            aiScore: 90
+          }
+        })
+      }
+
+      // Speichern & UI updaten
+      localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(tours))
+
+      setPlanningState({
+        running: false,
+        lastTours: tours.length,
+        lastFinished: Date.now(),
+        message: `${tours.length} Touren erstellt – NavioAI lebt!`
+      })
+
+      if (notify) {
+        alert(`BOOM! ${tours.length} perfekte Touren sind da!`)
+      }
+
+      return { ok: true, tours }
+
+    } catch (err) {
+      console.error('NavioAI Fehler:', err)
+      setPlanningState(prev => ({ ...prev, running: false, message: 'Fehler' }))
+      alert(err.message || 'KI-Fehler – nochmal versuchen')
+      return { ok: false }
     }
-
-    // Falls KI gar nichts gemacht hat → Fallback
-    if (finalTours.length === 0 && list.length > 0) {
-      alert('KI hat versagt → mache einfachen Regionen-Fallback');
-      const groups = {};
-      list.forEach(o => {
-        const r = o.zip?.[0] || 'X';
-        const region = { '0':'Ost','1':'Ost','2':'Ost','3':'Westfalen','4':'Ruhr','5':'Rheinland','6':'Mitte','7':'Süd','8':'Süd','9':'Süd' }[r] || 'Andere';
-        if (!groups[region]) groups[region] = [];
-        groups[region].push(o);
-      });
-      Object.entries(groups).forEach(([region, ords]) => {
-        const w = ords.reduce((s,o) => s + o.weight, 0);
-        finalTours.push({
-          id: `fb-${Date.now()}-${region}`,
-          name: `Tour ${region}`,
-          type: w > 1300 ? "groß" : "klein",
-          maxKg: w > 1300 ? 3000 : 1300,
-          weight: w,
-          stops: ords.length,
-          status: w >= 600 || ords.length >= 4 ? "fahrbar" : "wartet auf Füllung",
-          region,
-          orders: ords,
-          distance: 300,
-          aiScore: 90
-        });
-      });
-    }
-
-    localStorage.setItem(STORAGE_KEY_TOURS, JSON.stringify(finalTours));
-
-    setPlanningState({
-      running: false,
-      lastTours: finalTours.length,
-      lastFinished: Date.now(),
-      message: `${finalTours.length} regionale Touren – endlich stabil!`
-    });
-
-    if (notify) {
-      alert(`BOOM! ${finalTours.length} perfekte Touren sind da! NavioAI lebt!`);
-    }
-
-    return { ok: true, tours: finalTours };
-
-  } catch (err) {
-    console.error('NavioAI Fehler:', err);
-    setPlanningState(prev => ({ ...prev, running: false, message: 'Fehler' }));
-    alert(err.message || 'KI-Fehler – nochmal versuchen');
-    return { ok: false };
-  }
-}, []);
+  }, [])
   // ENDE des neuen Blocks – alles darunter bleibt wie bei dir!
 
   const autoPlanWithAi = useCallback(
