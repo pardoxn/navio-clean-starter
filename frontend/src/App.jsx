@@ -309,7 +309,7 @@ Beispiel:
   {"name":"Tour Niederbayern","region":"Süd","weight":192,"stops":1,"status":"wartet auf Füllung","type":"klein","maxKg":1300,"orders":[...]}
 ]}`;
 
-           const response = await fetch('https://navio-backend.onrender.com/plan', {
+           const response = await fetch('https://navio-backend-1.onrender.com/plan', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -323,23 +323,24 @@ Beispiel:
   })
 });
 
-    let text = await response.text();  // ← DAS FEHLTETE!
+if (!response.ok) {
+  throw new Error(`Backend-Fehler: ${response.status}`);
+}
 
-    if (text.includes('loading') || text.includes('estimated_time')) {
-      throw new Error('KI-Modell startet gerade – in 30 Sekunden nochmal klicken!');
-    }
+const data = await response.json();
+let text = data.raw || '';
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Kein gültiges JSON erhalten');
+if (!text) {
+  throw new Error('Leere Antwort vom Backend');
+}
 
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      throw new Error('JSON kaputt – KI hat Mist gebaut');
-    }
+// --- Dein alter Parsing-Code ab hier ---
+if (text.includes('loading') || text.includes('estimated_time')) {
+  throw new Error('KI startet gerade – in 30s nochmal klicken!');
+}
 
-    let tours = Array.isArray(parsed.tours) ? parsed.tours : [];
+const jsonMatch = text.match(/\{[\s\S]*\}/);
+if (!jsonMatch) throw new Error('Kein gültiges JSON erhalten');
 
     // HARTSCHUTZ + FINAL LOGIK
     const finalTours = [];
