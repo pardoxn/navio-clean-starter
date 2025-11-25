@@ -297,19 +297,20 @@ ${JSON.stringify(list.map(o => ({
 
 Plane jetzt!`;
 
-    const response = await fetch('https://benedikt78-navio-ai.huggingface.space/plan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+     headers: {
+    'Authorization': `Bearer ${import.meta.env.VITE_GROQ_KEY}`,
+    'Content-Type': 'application/json'
+  },
       body: JSON.stringify({
-        inputs: prompt,
-        parameters: {
-          max_new_tokens: 2400,
-          temperature: 0.3,
-          top_p: 0.95,
-          do_sample: true
-        }
-      })
-    })
+    model: "llama3-70b-8192",
+    temperature: 0.3,
+    messages: [
+      { role: "system", content: "Du bist ein erfahrener Disponent aus 33181 Bad Wünnenberg. Antworte NUR mit korrektem JSON, nichts anderes!" },
+      { role: "user", content: prompt }
+    ]
+  })
+});
 
     if (!response.ok) {
       const err = await response.text()
@@ -785,7 +786,9 @@ function CsvImportCard({ onImport }) {
       return
     }
 
-    const text = await fileObj.text()
+    const text = data.choices[0].message.content;
+const jsonMatch = text.match(/\{[\s\S]*\}/);
+const tours = jsonMatch ? JSON.parse(jsonMatch[0]).tours : [];
     const rows = parseCSVToOrders(text)
 
     onImport({ id, rows })
